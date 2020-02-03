@@ -2,8 +2,10 @@ package emailbridge
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"github.com/go-ee/utils/encrypt"
+	"github.com/go-ee/utils/net"
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"strings"
@@ -11,18 +13,21 @@ import (
 )
 
 const (
-	paramEmailTo      = "emailTo"
-	paramEmailSubject = "emailSubject"
-	paramEmailData    = "emailData"
-	paramEmailBody    = "emailBody"
+	paramTo      = "to"
+	paramName    = "name"
+	paramSubject = "subject"
+
+	paramEmailCode = "emailCode"
+	paramEmailBody = "emailBody"
 )
 
-func NewEmailData(to []string, subject string) *EmailData {
-	return &EmailData{To: to, Subject: subject, CreatedAt: time.Now()}
+func NewEmailData(to []string, name, subject string) *EmailData {
+	return &EmailData{To: to, Name: name, Subject: subject, CreatedAt: time.Now()}
 }
 
 type EmailData struct {
 	To        []string
+	Name      string
 	Subject   string
 	CreatedAt time.Time
 }
@@ -56,8 +61,9 @@ type HttpEmailBridge struct {
 
 func (o *HttpEmailBridge) Start() (err error) {
 	http.HandleFunc("/favicon.ico", o.faviconHandler)
-	http.HandleFunc("/generate", o.generateEmailData)
-	http.HandleFunc("/", o.sendEmail)
+	http.HandleFunc("/generate", o.emailDataGenerate)
+	http.HandleFunc("/", o.emailData)
+	http.HandleFunc("/sendemail", o.sendEmail)
 	serverAddr := fmt.Sprintf(":%v", o.Port)
 
 	logrus.Infof("Start server at %v", serverAddr)
@@ -65,38 +71,53 @@ func (o *HttpEmailBridge) Start() (err error) {
 	return
 }
 
-func (o *HttpEmailBridge) generateEmailData(w http.ResponseWriter, r *http.Request) {
-	if emailData := decodeEmailData(w, r); emailData != nil {
+func (o *HttpEmailBridge) emailData(w http.ResponseWriter, r *http.Request) {
+	var emailData *EmailData
+	if emailData = o.decryptEmailData(w, r); emailData == nil {
+		return
+	}
+	if jsonData, err := json.Marshal(emailData); err == nil {
+		statusOk(w, string(jsonData))
+	} else {
+		statusBadRequest(w, err.Error())
+	}
+}
+
+func (o *HttpEmailBridge) emailDataGenerate(w http.ResponseWriter, r *http.Request) {
+	if emailData := decodeEmailDataParams(w, r); emailData != nil {
 		if data, err := o.EncryptInstance(emailData); err == nil {
-			statusOk(w, hex.EncodeToString(data))
+			statusOk(w, fmt.Sprintf("<url>?%v=%v", paramEmailCode, hex.EncodeToString(data)))
 		} else {
 			statusBadRequest(w, err.Error())
 		}
 	}
 }
 
-func decodeEmailData(w http.ResponseWriter, r *http.Request) (ret *EmailData) {
-	params := r.URL.Query()
-	var to, subject string
-	if to = params.Get(paramEmailTo); to == "" {
-		parameterNotProvided(w, paramEmailTo)
+func decodeEmailDataParams(w http.ResponseWriter, r *http.Request) (ret *EmailData) {
+	var to, name, subject string
+	if to = net.GetQueryOrFormValue(paramTo, r); to == "" {
+		parameterNotProvided(w, paramTo)
 		return
 	}
 
-	if subject = params.Get(paramEmailSubject); subject == "" {
-		parameterNotProvided(w, paramEmailSubject)
+	if name = net.GetQueryOrFormValue(paramName, r); name == "" {
+		parameterNotProvided(w, paramName)
 		return
 	}
 
-	ret = NewEmailData(strings.Split(to, ","), subject)
+	if subject = net.GetQueryOrFormValue(paramSubject, r); subject == "" {
+		parameterNotProvided(w, paramSubject)
+		return
+	}
+
+	ret = NewEmailData(strings.Split(to, ","), name, subject)
 	return
 }
 
 func (o *HttpEmailBridge) decryptEmailData(w http.ResponseWriter, r *http.Request) (ret *EmailData) {
-	params := r.URL.Query()
 	var encrypted string
-	if encrypted = params.Get(paramEmailData); encrypted == "" {
-		parameterNotProvided(w, paramEmailData)
+	if encrypted = net.GetQueryOrFormValue(paramEmailCode, r); encrypted == "" {
+		parameterNotProvided(w, paramEmailCode)
 		return
 	}
 
@@ -122,13 +143,7 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var emailBody string
-	if emailBody = r.URL.Query().Get(paramEmailBody); emailBody == "" {
-		if err := r.ParseForm(); err != nil {
-			logrus.Infof("error parse form %v", err)
-			return
-		}
-		emailBody = r.FormValue(emailBody)
-	}
+	emailBody = net.GetQueryOrFormValue(paramEmailBody, r)
 
 	htmlMessage := o.BuildHTMLEmail(emailData.To, emailData.Subject, emailBody)
 
