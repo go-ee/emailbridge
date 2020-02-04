@@ -62,8 +62,8 @@ type HttpEmailBridge struct {
 func (o *HttpEmailBridge) Start() (err error) {
 	http.HandleFunc("/favicon.ico", o.faviconHandler)
 	http.HandleFunc("/generate", o.emailDataGenerate)
-	http.HandleFunc("/", o.emailData)
 	http.HandleFunc("/sendemail", o.sendEmail)
+	http.HandleFunc("/", o.emailData)
 	serverAddr := fmt.Sprintf(":%v", o.Port)
 
 	logrus.Infof("Start server at %v", serverAddr)
@@ -157,12 +157,14 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func statusOk(w http.ResponseWriter, msg string) {
+	net.EnableCors(w)
 	if _, resErr := w.Write([]byte(msg)); resErr != nil {
 		logrus.Debug("error writing response %v", resErr)
 	}
 }
 
 func statusBadRequest(w http.ResponseWriter, msg string) {
+	net.EnableCors(w)
 	w.WriteHeader(http.StatusBadRequest)
 	if _, resErr := w.Write([]byte(msg)); resErr != nil {
 		logrus.Debug("error writing response %v", resErr)
