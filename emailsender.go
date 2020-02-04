@@ -2,10 +2,11 @@ package emailbridge
 
 import (
 	"bytes"
+	"crypto/tls"
 	"fmt"
+	"github.com/go-ee/utils/net/smtp"
 	"github.com/sirupsen/logrus"
 	"mime/quotedprintable"
-	"net/smtp"
 	"strings"
 )
 
@@ -31,9 +32,12 @@ func (o EmailSender) SendMail(Dest []string, Subject, message string) (err error
 
 	if err = smtp.SendMail(SMTPHostWithPort,
 		smtp.PlainAuth("", o.User, o.Password, SMTPHost),
-		o.User, Dest, []byte(msg)); err != nil {
+		o.User, Dest, []byte(msg), &tls.Config{
+			InsecureSkipVerify: true,
+			ServerName:         SMTPHost,
+		}); err != nil {
 
-		logrus.Debugf("SendMail, err=%v, %v, %v", err, Dest, Subject)
+		logrus.Warnf("SendMail, err=%v, %v, %v", err, Dest, Subject)
 	}
 	return
 }
