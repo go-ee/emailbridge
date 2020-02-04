@@ -2,11 +2,10 @@ package main
 
 import (
 	"github.com/go-ee/emailbridge"
-	"os"
-	"s2r/shared"
-
+	"github.com/go-ee/utils/lg"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"os"
 )
 
 func main() {
@@ -20,7 +19,7 @@ func main() {
 	var debug bool
 	var port int
 
-	shared.LogrusTimeAsTimestampFormatter()
+	lg.LogrusTimeAsTimestampFormatter()
 
 	app.Before = func(c *cli.Context) (err error) {
 		if debug {
