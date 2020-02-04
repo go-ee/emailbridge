@@ -173,6 +173,16 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 
 	htmlMessage := o.BuildHTMLEmail(emailData.To, emailData.Subject, emailBody)
 
+	o.storeEmail(r, &htmlMessage, emailData)
+
+	if err := o.SendMail(emailData.To, emailData.Subject, htmlMessage); err == nil {
+		statusOk(w, "email sent successfully.")
+	} else {
+		statusBadRequest(w, err.Error())
+	}
+}
+
+func (o *HttpEmailBridge) storeEmail(r *http.Request, htmlMessage *string, emailData *EmailData) {
 	if o.storeEmails {
 		fileData := []byte(fmt.Sprintf("request:\n%v\n\nmessage:\n%v\n", net.FormatRequestFrom(r), htmlMessage))
 		filePath := filepath.Clean(fmt.Sprintf("%v/%v_%v.txt",
@@ -183,15 +193,10 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 			logrus.Debugf("written '%v', bytes=%v", filePath, len(fileData))
 		}
 	}
-
-	if err := o.SendMail(emailData.To, emailData.Subject, htmlMessage); err == nil {
-		statusOk(w, "email sent successfully.")
-	} else {
-		statusBadRequest(w, err.Error())
-	}
 }
 
 func statusOk(w http.ResponseWriter, msg string) {
+	logrus.Debug("statusOk, %v", msg)
 	net.EnableCors(w)
 	if _, resErr := w.Write([]byte(msg)); resErr != nil {
 		logrus.Debug("error writing response %v", resErr)
@@ -199,6 +204,8 @@ func statusOk(w http.ResponseWriter, msg string) {
 }
 
 func statusBadRequest(w http.ResponseWriter, msg string) {
+	logrus.Warnf("statusBadRequest, %v", msg)
+
 	net.EnableCors(w)
 	w.WriteHeader(http.StatusBadRequest)
 	if _, resErr := w.Write([]byte(msg)); resErr != nil {

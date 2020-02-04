@@ -3,6 +3,7 @@ package emailbridge
 import (
 	"bytes"
 	"fmt"
+	"github.com/sirupsen/logrus"
 	"mime/quotedprintable"
 	"net/smtp"
 	"strings"
@@ -26,9 +27,14 @@ func (o EmailSender) SendMail(Dest []string, Subject, message string) (err error
 	msg := fmt.Sprintf("From: %v\nTo: %v\nSubject: %v\n%v",
 		o.User, strings.Join(Dest, ","), Subject, message)
 
-	err = smtp.SendMail(SMTPHostWithPort,
+	logrus.Debugf("SendMail, %v, %v", Dest, Subject)
+
+	if err = smtp.SendMail(SMTPHostWithPort,
 		smtp.PlainAuth("", o.User, o.Password, SMTPHost),
-		o.User, Dest, []byte(msg))
+		o.User, Dest, []byte(msg)); err != nil {
+
+		logrus.Debugf("SendMail, err=%v, %v, %v", err, Dest, Subject)
+	}
 	return
 }
 
