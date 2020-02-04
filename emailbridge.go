@@ -185,8 +185,8 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 func (o *HttpEmailBridge) storeEmail(r *http.Request, htmlMessage *string, emailData *EmailData) {
 	if o.storeEmails {
 		fileData := []byte(fmt.Sprintf("request:\n%v\n\nmessage:\n%v\n", net.FormatRequestFrom(r), htmlMessage))
-		filePath := filepath.Clean(fmt.Sprintf("%v/%v_%v.txt",
-			o.PathStorage, strings.Join(emailData.To, "_"), emailData.Subject))
+		filePath := filepath.Clean(fmt.Sprintf("%v/%v_%v_%v.txt",
+			o.PathStorage, strings.Join(emailData.To, "_"), emailData.Subject, time.Now()))
 		if fileErr := ioutil.WriteFile(filePath, fileData, 0644); fileErr != nil {
 			logrus.Warnf("can't write '%v', %v", filePath, fileErr)
 		} else {
