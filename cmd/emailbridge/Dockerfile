@@ -1,4 +1,7 @@
-FROM scratch
+FROM alpine:latest
 
-ADD emailbridge /
-CMD ["/emailbridge"]
+RUN mkdir /app
+WORKDIR /app
+COPY emailbridge .
+
+ENTRYPOINT ["/app/emailbridge"]
