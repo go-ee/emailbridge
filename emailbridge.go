@@ -107,6 +107,8 @@ func (o *HttpEmailBridge) emailData(w http.ResponseWriter, r *http.Request) {
 
 func (o *HttpEmailBridge) emailDataGenerate(w http.ResponseWriter, r *http.Request) {
 	if emailData := decodeEmailDataParams(w, r); emailData != nil {
+		logrus.Debugf("emailDataGenerate, %v, %v", emailData.To, emailData.Subject)
+
 		if data, err := o.EncryptInstance(emailData); err == nil {
 			statusOk(w, fmt.Sprintf("<url>?%v=%v", paramEmailCode, hex.EncodeToString(data)))
 		} else {
@@ -163,6 +165,8 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 	if emailData = o.decryptEmailData(w, r); emailData == nil {
 		return
 	}
+
+	logrus.Debugf("sendEmail, %v, %v", emailData.To, emailData.Subject)
 
 	var emailBody string
 	emailBody = net.GetQueryOrFormValue(paramEmailBody, r)
