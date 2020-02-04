@@ -7,7 +7,10 @@ import (
 	"github.com/go-ee/utils/encrypt"
 	"github.com/go-ee/utils/net"
 	"github.com/sirupsen/logrus"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -34,7 +37,7 @@ type EmailData struct {
 
 func NewEmailBridge(
 	senderEmail, senderPassword string,
-	port int, pathStatic string,
+	port int, pathStorage string, pathStatic string,
 	encryptPassphrase string) (ret *HttpEmailBridge, err error) {
 
 	var encryptor *encrypt.Encryptor
@@ -47,6 +50,7 @@ func NewEmailBridge(
 		EmailSender: NewEmailSender(senderEmail, senderPassword),
 		Encryptor:   encryptor,
 		Port:        port,
+		PathStorage: pathStorage,
 		PathStatic:  pathStatic,
 	}
 	return
@@ -55,11 +59,19 @@ func NewEmailBridge(
 type HttpEmailBridge struct {
 	*EmailSender
 	*encrypt.Encryptor
-	Port       int
-	PathStatic string
+	Port        int
+	PathStatic  string
+	PathStorage string
+
+	storeEmails bool
 }
 
 func (o *HttpEmailBridge) Start() (err error) {
+
+	if err = o.checkAndCreateStorage(); err != nil {
+		return
+	}
+
 	http.HandleFunc("/favicon.ico", o.faviconHandler)
 	http.HandleFunc("/generate", o.emailDataGenerate)
 	http.HandleFunc("/sendemail", o.sendEmail)
@@ -68,6 +80,16 @@ func (o *HttpEmailBridge) Start() (err error) {
 
 	logrus.Infof("Start server at %v", serverAddr)
 	err = http.ListenAndServe(serverAddr, nil)
+	return
+}
+
+func (o *HttpEmailBridge) checkAndCreateStorage() (err error) {
+	o.storeEmails = false
+	if o.PathStorage != "" {
+		if err = os.MkdirAll(o.PathStorage, 0755); err == nil {
+			o.storeEmails = true
+		}
+	}
 	return
 }
 
@@ -147,7 +169,16 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 
 	htmlMessage := o.BuildHTMLEmail(emailData.To, emailData.Subject, emailBody)
 
-	logrus.Infof("%v", htmlMessage)
+	if o.storeEmails {
+		fileData := []byte(fmt.Sprintf("request:\n%v\n\nmessage:\n%v\n", net.FormatRequestFrom(r), htmlMessage))
+		filePath := filepath.Clean(fmt.Sprintf("%v/%v_%v.txt",
+			o.PathStorage, strings.Join(emailData.To, "_"), emailData.Subject))
+		if fileErr := ioutil.WriteFile(filePath, fileData, 0644); fileErr != nil {
+			logrus.Warnf("can't write '%v', %v", filePath, fileErr)
+		} else {
+			logrus.Debugf("written '%v', bytes=%v", filePath, len(fileData))
+		}
+	}
 
 	if err := o.SendMail(emailData.To, emailData.Subject, htmlMessage); err == nil {
 		statusOk(w, "email sent successfully.")

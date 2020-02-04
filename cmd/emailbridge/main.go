@@ -14,7 +14,7 @@ func main() {
 	app.Version = "1.0"
 
 	var senderEmail, senderPassword string
-	var pathStatic, encryptPassphrase string
+	var pathStorage, pathStatic, encryptPassphrase string
 
 	var debug bool
 	var port int
@@ -62,6 +62,10 @@ func main() {
 					Value:       "static",
 					Destination: &pathStatic,
 				}, &cli.StringFlag{
+					Name:        "pathStorage",
+					Value:       "storage",
+					Destination: &pathStorage,
+				}, &cli.StringFlag{
 					Name:        "encryptPassphrase",
 					Destination: &encryptPassphrase,
 				},
@@ -73,7 +77,7 @@ func main() {
 
 				var bridge *emailbridge.HttpEmailBridge
 				if bridge, err = emailbridge.NewEmailBridge(senderEmail, senderPassword,
-					port, pathStatic, encryptPassphrase); err == nil {
+					port, pathStorage, pathStatic, encryptPassphrase); err == nil {
 
 					err = bridge.Start()
 				}
@@ -88,10 +92,9 @@ func main() {
 
 				sender := emailbridge.NewEmailSender(senderEmail, senderPassword)
 
-				//The receiver needs to be in slice as the receive supports multiple receiver
 				Receiver := []string{"otschen.prosto@gmail.com"}
 
-				Subject := "Testing HTLML Email from golang"
+				Subject := "Test Email from EmailBridge"
 				message := `
 	<!DOCTYPE HTML PULBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 	<html>
@@ -109,8 +112,7 @@ func main() {
 	`
 				bodyMessage := sender.BuildHTMLEmail(Receiver, Subject, message)
 
-				sender.SendMail(Receiver, Subject, bodyMessage)
-
+				err = sender.SendMail(Receiver, Subject, bodyMessage)
 				return
 			},
 		},
