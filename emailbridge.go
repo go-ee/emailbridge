@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/go-ee/utils/encrypt"
 	"github.com/go-ee/utils/net"
@@ -103,6 +104,10 @@ func (o *HttpEmailBridge) Start() (err error) {
 		return
 	}
 
+	if err = o.checkAndCreateStatic(); err != nil {
+		return
+	}
+
 	http.HandleFunc("/favicon.ico", o.faviconHandler)
 	http.HandleFunc("/generate", o.generateLink)
 	http.HandleFunc("/sendemail", o.sendEmail)
@@ -117,9 +122,20 @@ func (o *HttpEmailBridge) Start() (err error) {
 func (o *HttpEmailBridge) checkAndCreateStorage() (err error) {
 	o.storeEmails = false
 	if o.PathStorage != "" {
-		if err = os.MkdirAll(o.PathStorage, 0755); err == nil {
+		if err = createDirs(o.PathStorage); err == nil {
 			o.storeEmails = true
 		}
+	}
+	return
+}
+
+func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
+	if o.PathStatic != "" {
+		if err = createDirs(o.PathStatic); err == nil {
+			o.storeEmails = true
+		}
+	} else {
+		err = errors.New("path for static files not defined")
 	}
 	return
 }
@@ -246,4 +262,12 @@ func statusBadRequest(w http.ResponseWriter, msg string) {
 func (o *HttpEmailBridge) faviconHandler(w http.ResponseWriter, r *http.Request) {
 	favicon := fmt.Sprintf("%v/favicon.ico", o.PathStatic)
 	http.ServeFile(w, r, favicon)
+}
+
+
+func createDirs(path string) (err error) {
+	if err = os.MkdirAll(path, 0755); err != nil {
+		logrus.Infof("can't create '%v': %v", path, err)
+	}
+	return
 }
