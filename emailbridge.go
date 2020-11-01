@@ -59,7 +59,7 @@ type EmailData struct {
 }
 
 func NewEmailBridge(
-	senderEmail, senderPassword string,
+	senderEmail, senderPassword string, smtpHost string, smtpPort int,
 	port int, pathStorage string, pathStatic string,
 	encryptPassphrase string) (ret *HttpEmailBridge, err error) {
 
@@ -77,7 +77,7 @@ func NewEmailBridge(
 	}
 
 	ret = &HttpEmailBridge{
-		EmailSender:   NewEmailSender(senderEmail, senderPassword),
+		EmailSender:   NewEmailSender(senderEmail, senderPassword, smtpHost, smtpPort),
 		Encryptor:     encryptor,
 		Port:          port,
 		PathStorage:   pathStorage,

@@ -13,7 +13,8 @@ func main() {
 	app.Usage = "Email Bridge CLI"
 	app.Version = "1.0"
 
-	var senderEmail, senderPassword string
+	var senderEmail, senderPassword, smtpHost string
+	var smtpPort int
 	var pathStorage, pathStatic, encryptPassphrase string
 
 	var debug bool
@@ -44,6 +45,16 @@ func main() {
 			Usage:       "Sender password for authentication ",
 			Required:    true,
 			Destination: &senderPassword,
+		}, &cli.StringFlag{
+			Name:        "smtpHost",
+			Usage:       "SMTP Server Host",
+			Value:       "smtp.gmail.com",
+			Destination: &smtpHost,
+		}, &cli.IntFlag{
+			Name:     "smtpPort",
+			Usage:    "Sender Server Port",
+			Value:    587,
+			Destination: &smtpPort,
 		},
 	}
 
@@ -76,7 +87,7 @@ func main() {
 				}
 
 				var bridge *emailbridge.HttpEmailBridge
-				if bridge, err = emailbridge.NewEmailBridge(senderEmail, senderPassword,
+				if bridge, err = emailbridge.NewEmailBridge(senderEmail, senderPassword, smtpHost, smtpPort,
 					port, pathStorage, pathStatic, encryptPassphrase); err == nil {
 
 					err = bridge.Start()
@@ -90,7 +101,7 @@ func main() {
 			},
 			Action: func(c *cli.Context) (err error) {
 
-				sender := emailbridge.NewEmailSender(senderEmail, senderPassword)
+				sender := emailbridge.NewEmailSender(senderEmail, senderPassword, smtpHost, smtpPort)
 
 				Receiver := []string{"otschen.prosto@gmail.com"}
 

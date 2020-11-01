@@ -8,20 +8,20 @@ import (
 	"github.com/sirupsen/logrus"
 	"mime/quotedprintable"
 	"strings"
-)
-
-const (
-	SMTPHost         = "smtp.gmail.com"
-	SMTPHostWithPort = "smtp.gmail.com:587"
+	"time"
 )
 
 type EmailSender struct {
 	User     string
 	Password string
+	SmtpHost string
+	SmtpPort int
+	smtpHostWithPort string
 }
 
-func NewEmailSender(Username, Password string) *EmailSender {
-	return &EmailSender{Username, Password}
+func NewEmailSender(Username, Password string, smtpHost string, smtpPort int) *EmailSender {
+	return &EmailSender{Username, Password, smtpHost, smtpPort,
+		fmt.Sprintf("%v:%v", smtpHost, smtpPort)}
 }
 
 func (o EmailSender) SendMail(Dest []string, Subject, message string) (err error) {
@@ -30,11 +30,11 @@ func (o EmailSender) SendMail(Dest []string, Subject, message string) (err error
 
 	logrus.Debugf("SendMail, %v, %v", Dest, Subject)
 
-	if err = smtp.SendMail(SMTPHostWithPort,
-		smtp.PlainAuth("", o.User, o.Password, SMTPHost),
+	if err = smtp.SendMail(o.smtpHostWithPort,
+		smtp.PlainAuth("", o.User, o.Password, o.SmtpHost),
 		o.User, Dest, []byte(msg), &tls.Config{
 			InsecureSkipVerify: true,
-			ServerName:         SMTPHost,
+			ServerName:         o.SmtpHost,
 		}); err != nil {
 
 		logrus.Warnf("SendMail, err=%v, %v, %v", err, Dest, Subject)
@@ -45,16 +45,17 @@ func (o EmailSender) SendMail(Dest []string, Subject, message string) (err error
 func (o EmailSender) BuildEmail(dest []string, contentType, subject, bodyMessage string) string {
 
 	header := make(map[string]string)
-	header["From"] = o.User
+	//header["From"] = o.User
 
-	receipient := ""
+	//receipient := ""
 
-	for _, user := range dest {
-		receipient = receipient + user
-	}
+	//for _, user := range dest {
+	//	receipient = receipient + user
+	//}
 
-	header["To"] = receipient
-	header["Subject"] = subject
+	//header["To"] = receipient
+	//header["Subject"] = subject
+	header["Date"] = time.Now().Format(time.RFC1123Z)
 	header["MIME-Version"] = "1.0"
 	header["Content-Type"] = fmt.Sprintf("%s; charset=\"utf-8\"", contentType)
 	header["Content-Transfer-Encoding"] = "quoted-printable"
