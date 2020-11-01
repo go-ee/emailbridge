@@ -4,7 +4,7 @@ import (
 	"github.com/go-ee/emailbridge"
 	"github.com/go-ee/utils/lg"
 	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 	"os"
 )
 
@@ -119,6 +119,12 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
+		if markdown, err := app.ToMarkdown(); err == nil {
+			logrus.Infof("\n%v", markdown)
+		} else {
+			logrus.Infof("%v", err)
+		}
+
 		logrus.WithFields(logrus.Fields{"err": err}).Warn("exit because of error.")
 	}
 }
