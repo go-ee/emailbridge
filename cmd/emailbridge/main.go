@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"github.com/go-ee/emailbridge"
 	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/lg"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"net/http"
 	"os"
 )
 
@@ -14,12 +16,10 @@ func main() {
 	app.Usage = "Email Bridge CLI"
 	app.Version = "1.0"
 
-	var senderEmail, senderPassword, smtpHost, receiverEmail string
-	var smtpPort int
-	var pathStorage, pathStatic, encryptPassphrase string
-
+	var serverAddress, emailAddress, receiverEmail, smtpLogin, smtpPassword, smtpHost string
+	var serverPort, smtpPort int
 	var debug bool
-	var port int
+	var pathStorage, pathStatic, encryptPassphrase string
 
 	lg.LogrusTimeAsTimestampFormatter()
 
@@ -37,23 +37,28 @@ func main() {
 			Destination: &debug,
 			Usage:       "Enable debug log level",
 		}, &cli.StringFlag{
-			Name:        "senderEmail",
-			Usage:       "Sender Email for authentication and FROM field",
+			Name:        "email",
+			Usage:       "Email address of sender",
 			Required:    true,
-			Destination: &senderEmail,
+			Destination: &emailAddress,
 		}, &cli.StringFlag{
-			Name:        "senderPassword",
-			Usage:       "Sender password for authentication ",
+			Name:        "smtpLogin",
+			Usage:       "SMTP login",
 			Required:    true,
-			Destination: &senderPassword,
+			Destination: &smtpLogin,
+		}, &cli.StringFlag{
+			Name:        "smtpPassword",
+			Usage:       "SMTP password",
+			Required:    true,
+			Destination: &smtpPassword,
 		}, &cli.StringFlag{
 			Name:        "smtpHost",
-			Usage:       "SMTP Server Host",
+			Usage:       "SMTP server host",
 			Value:       "smtp.gmail.com",
 			Destination: &smtpHost,
 		}, &cli.IntFlag{
 			Name:        "smtpPort",
-			Usage:       "Sender Server Port",
+			Usage:       "SMTP server port",
 			Value:       587,
 			Destination: &smtpPort,
 		},
@@ -64,17 +69,26 @@ func main() {
 			Name:  "startBridge",
 			Usage: "Start HTTP to EMAIL Bridge",
 			Flags: []cli.Flag{
-				&cli.IntFlag{
-					Name:        "port",
-					Destination: &port,
+				&cli.StringFlag{
+					Name:        "serverAddress",
+					Required:    true,
+					Destination: &serverAddress,
+					Value:       "",
+					Usage:       "HTTP Server serverAddress",
+				}, &cli.IntFlag{
+					Name:        "serverPort",
+					Required:    true,
+					Destination: &serverPort,
 					Value:       8080,
-					Usage:       "HTTP Server port",
+					Usage:       "HTTP Server serverPort",
 				}, &cli.StringFlag{
 					Name:        "pathStatic",
+					Required:    true,
 					Value:       "static",
 					Destination: &pathStatic,
 				}, &cli.StringFlag{
 					Name:        "pathStorage",
+					Required:    true,
 					Value:       "storage",
 					Destination: &pathStorage,
 				}, &cli.StringFlag{
@@ -84,14 +98,19 @@ func main() {
 			},
 			Action: func(c *cli.Context) (err error) {
 				if encryptPassphrase == "" {
-					encryptPassphrase = senderPassword
+					encryptPassphrase = smtpPassword
 				}
 
 				var bridge *emailbridge.HttpEmailBridge
-				if bridge, err = emailbridge.NewEmailBridge(senderEmail, senderPassword, smtpHost, smtpPort,
-					port, pathStorage, pathStatic, encryptPassphrase); err == nil {
+				if bridge, err = emailbridge.NewEmailBridge(emailAddress, smtpLogin, smtpPassword, smtpHost, smtpPort,
+					pathStorage, pathStatic, encryptPassphrase); err == nil {
 
-					err = bridge.Start()
+					wireRoutes(bridge)
+
+					serverAddr := fmt.Sprintf("%v:%v", serverAddress, serverPort)
+
+					logrus.Infof("Start server at %v", serverAddr)
+					err = http.ListenAndServe(serverAddr, nil)
 				}
 				return
 			},
@@ -101,14 +120,14 @@ func main() {
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:        "receiverEmail",
-					Usage:       "Receiver Email address",
+					Usage:       "Receiver Email serverAddress",
 					Required:    true,
 					Destination: &receiverEmail,
 				},
 			},
 			Action: func(c *cli.Context) (err error) {
 
-				sender := email.NewSender(senderEmail, senderPassword, smtpHost, smtpPort)
+				sender := email.NewSender(emailAddress, smtpLogin, smtpPassword, smtpHost, smtpPort)
 
 				receiver := []string{receiverEmail}
 
@@ -145,4 +164,15 @@ func main() {
 
 		logrus.WithFields(logrus.Fields{"err": err}).Warn("exit because of error.")
 	}
+}
+
+func wireRoutes(bridge *emailbridge.HttpEmailBridge) {
+
+	http.HandleFunc("/favicon.ico", bridge.FaviconHandler)
+	http.HandleFunc("/generate", bridge.GenerateEncryptedCode)
+	http.HandleFunc("/sendEmail", bridge.SendEmail)
+	http.HandleFunc("/sendEmailByEncryptedCode", bridge.SendEmailByEncryptedCode)
+	http.HandleFunc("/", bridge.GenerateEncryptedCode)
+
+	return
 }

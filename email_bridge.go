@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/encrypt"
 	"github.com/go-ee/utils/net"
 	"github.com/sirupsen/logrus"
@@ -59,9 +60,8 @@ type EmailData struct {
 }
 
 func NewEmailBridge(
-	senderEmail, senderPassword string, smtpHost string, smtpPort int,
-	port int, pathStorage string, pathStatic string,
-	encryptPassphrase string) (ret *HttpEmailBridge, err error) {
+	emailAddress, smtpLogin, smtpPassword, smtpHost string, smtpPort int,
+	pathStorage string, pathStatic string, encryptPassphrase string) (ret *HttpEmailBridge, err error) {
 
 	var encryptor *encrypt.Encryptor
 
@@ -77,73 +77,50 @@ func NewEmailBridge(
 	}
 
 	ret = &HttpEmailBridge{
-		EmailSender:   NewEmailSender(senderEmail, senderPassword, smtpHost, smtpPort),
+		Sender:        email.NewSender(emailAddress, smtpLogin, smtpPassword, smtpHost, smtpPort),
 		Encryptor:     encryptor,
-		Port:          port,
-		PathStorage:   pathStorage,
-		PathStatic:    pathStatic,
+		pathStorage:   pathStorage,
+		pathStatic:    pathStatic,
 		emailDataTmpl: emailDataFormTemplate,
 	}
+
+	if err = ret.checkAndCreateStorage(); err != nil {
+		return
+	}
+
+	if err = ret.checkAndCreateStatic(); err != nil {
+		return
+	}
+
 	return
 }
 
 type HttpEmailBridge struct {
-	*EmailSender
+	*email.Sender
 	*encrypt.Encryptor
-	Port        int
-	PathStatic  string
-	PathStorage string
-
+	pathStatic    string
+	pathStorage   string
 	emailDataTmpl *template.Template
 	storeEmails   bool
 }
 
-func (o *HttpEmailBridge) Start() (err error) {
+func (o *HttpEmailBridge) SendEmail(w http.ResponseWriter, r *http.Request) {
+	emailData := decodeEmailDataParams(r)
 
-	if err = o.checkAndCreateStorage(); err != nil {
-		return
-	}
-
-	if err = o.checkAndCreateStatic(); err != nil {
-		return
-	}
-
-	http.HandleFunc("/favicon.ico", o.faviconHandler)
-	http.HandleFunc("/generate", o.generateLink)
-	http.HandleFunc("/sendemail", o.sendEmail)
-	http.HandleFunc("/", o.emailData)
-	serverAddr := fmt.Sprintf(":%v", o.Port)
-
-	logrus.Infof("Start server at %v", serverAddr)
-	err = http.ListenAndServe(serverAddr, nil)
-	return
-}
-
-func (o *HttpEmailBridge) checkAndCreateStorage() (err error) {
-	o.storeEmails = false
-	if o.PathStorage != "" {
-		if err = os.MkdirAll(o.PathStorage, 0755); err == nil {
-			o.storeEmails = true
-			logrus.Infof("use the storage path: %v", o.PathStorage)
+	if len(emailData.To) == 0 || emailData.Name == "" || emailData.Subject == "" {
+		var emailDataForm bytes.Buffer
+		if err := o.emailDataTmpl.Execute(&emailDataForm, emailData); err != nil {
+			statusBadRequest(w, err.Error())
 		} else {
-			logrus.Infof("can't create the storage path '%v': %v", o.PathStorage, err)
+			statusBadRequest(w, emailDataForm.String())
 		}
+	} else {
+		o.sendEmailByEmailData(emailData, w, r)
 	}
 	return
 }
 
-func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
-	if o.PathStatic != "" {
-		if err = os.MkdirAll(o.PathStatic, 0755); err == nil {
-			logrus.Infof("use the static path: %v", o.PathStatic)
-		} else {
-			err = errors.New("path for static files not defined")
-		}
-	}
-	return
-}
-
-func (o *HttpEmailBridge) emailData(w http.ResponseWriter, r *http.Request) {
+func (o *HttpEmailBridge) GenerateEncryptedCode(w http.ResponseWriter, r *http.Request) {
 	var emailData *EmailData
 	if emailData = o.decryptEmailData(w, r); emailData == nil {
 		return
@@ -155,7 +132,7 @@ func (o *HttpEmailBridge) emailData(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (o *HttpEmailBridge) generateLink(w http.ResponseWriter, r *http.Request) {
+func (o *HttpEmailBridge) GenerateEncryptedCodeWithLink(w http.ResponseWriter, r *http.Request) {
 	emailData := decodeEmailDataParams(r)
 
 	if len(emailData.To) == 0 || emailData.Name == "" || emailData.Subject == "" {
@@ -166,7 +143,7 @@ func (o *HttpEmailBridge) generateLink(w http.ResponseWriter, r *http.Request) {
 			statusBadRequest(w, emailDataForm.String())
 		}
 	} else {
-		logrus.Debugf("generateLink, %v, %v", emailData.To, emailData.Subject)
+		logrus.Debugf("GenerateEncryptedCode, %v, %v", emailData.To, emailData.Subject)
 
 		if data, err := o.EncryptInstance(emailData); err == nil {
 			statusOk(w, fmt.Sprintf("%v?%v=%v", emailData.Url, paramEmailCode, hex.EncodeToString(data)))
@@ -175,6 +152,41 @@ func (o *HttpEmailBridge) generateLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	return
+}
+
+func (o *HttpEmailBridge) FaviconHandler(w http.ResponseWriter, r *http.Request) {
+	favicon := fmt.Sprintf("%v/favicon.ico", o.pathStatic)
+	http.ServeFile(w, r, favicon)
+}
+
+func (o *HttpEmailBridge) SendEmailByEncryptedCode(w http.ResponseWriter, r *http.Request) {
+	var emailData *EmailData
+	if emailData = o.decryptEmailData(w, r); emailData == nil {
+		return
+	}
+
+	o.sendEmailByEmailData(emailData, w, r)
+}
+
+func (o *HttpEmailBridge) sendEmailByEmailData(emailData *EmailData, w http.ResponseWriter, r *http.Request) {
+	logrus.Debugf("sendEmailByEmailData, %v, %v", emailData.To, emailData.Subject)
+
+	var emailBody string
+	emailBody = net.GetQueryOrFormValue(paramEmailBody, r)
+
+	htmlMessage, err := o.BuildEmailHTML(emailBody)
+	if err != nil {
+		statusBadRequest(w, err.Error())
+		return
+	}
+
+	o.storeEmail(r, &htmlMessage, emailData)
+
+	if err := o.Send(emailData.To, emailData.Subject, htmlMessage); err == nil {
+		statusOk(w, "email sent successfully.")
+	} else {
+		statusBadRequest(w, err.Error())
+	}
 }
 
 func decodeEmailDataParams(r *http.Request) (ret *EmailData) {
@@ -201,7 +213,6 @@ func (o *HttpEmailBridge) decryptEmailData(w http.ResponseWriter, r *http.Reques
 	} else {
 		statusBadRequest(w, err.Error())
 	}
-
 	return
 }
 
@@ -209,37 +220,11 @@ func parameterNotProvided(w http.ResponseWriter, param string) {
 	statusBadRequest(w, fmt.Sprintf("'%v' parameter is not provided", param))
 }
 
-func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
-	var emailData *EmailData
-	if emailData = o.decryptEmailData(w, r); emailData == nil {
-		return
-	}
-
-	logrus.Debugf("sendEmail, %v, %v", emailData.To, emailData.Subject)
-
-	var emailBody string
-	emailBody = net.GetQueryOrFormValue(paramEmailBody, r)
-
-	htmlMessage, err := o.BuildHTMLEmail(emailBody)
-	if err != nil {
-		statusBadRequest(w, err.Error())
-		return
-	}
-
-	o.storeEmail(r, &htmlMessage, emailData)
-
-	if err := o.SendMail(emailData.To, emailData.Subject, htmlMessage); err == nil {
-		statusOk(w, "email sent successfully.")
-	} else {
-		statusBadRequest(w, err.Error())
-	}
-}
-
 func (o *HttpEmailBridge) storeEmail(r *http.Request, htmlMessage *string, emailData *EmailData) {
 	if o.storeEmails {
 		fileData := []byte(fmt.Sprintf("request:\n%v\n\nmessage:\n%v\n", net.FormatRequestFrom(r), htmlMessage))
 		filePath := filepath.Clean(fmt.Sprintf("%v/%v_%v_%v.txt",
-			o.PathStorage, strings.Join(emailData.To, "_"), emailData.Subject, time.Now()))
+			o.pathStorage, strings.Join(emailData.To, "_"), emailData.Subject, time.Now()))
 		if fileErr := ioutil.WriteFile(filePath, fileData, 0644); fileErr != nil {
 			logrus.Warnf("can't write '%v', %v", filePath, fileErr)
 		} else {
@@ -266,7 +251,26 @@ func statusBadRequest(w http.ResponseWriter, msg string) {
 	}
 }
 
-func (o *HttpEmailBridge) faviconHandler(w http.ResponseWriter, r *http.Request) {
-	favicon := fmt.Sprintf("%v/favicon.ico", o.PathStatic)
-	http.ServeFile(w, r, favicon)
+func (o *HttpEmailBridge) checkAndCreateStorage() (err error) {
+	o.storeEmails = false
+	if o.pathStorage != "" {
+		if err = os.MkdirAll(o.pathStorage, 0755); err == nil {
+			o.storeEmails = true
+			logrus.Infof("use the storage path: %v", o.pathStorage)
+		} else {
+			logrus.Infof("can't create the storage path '%v': %v", o.pathStorage, err)
+		}
+	}
+	return
+}
+
+func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
+	if o.pathStatic != "" {
+		if err = os.MkdirAll(o.pathStatic, 0755); err == nil {
+			logrus.Infof("use the static path: %v", o.pathStatic)
+		} else {
+			err = errors.New("path for static files not defined")
+		}
+	}
+	return
 }
