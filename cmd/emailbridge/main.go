@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/go-ee/emailbridge"
+	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/lg"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
@@ -13,7 +14,7 @@ func main() {
 	app.Usage = "Email Bridge CLI"
 	app.Version = "1.0"
 
-	var senderEmail, senderPassword, smtpHost string
+	var senderEmail, senderPassword, smtpHost, receiverEmail string
 	var smtpPort int
 	var pathStorage, pathStatic, encryptPassphrase string
 
@@ -51,9 +52,9 @@ func main() {
 			Value:       "smtp.gmail.com",
 			Destination: &smtpHost,
 		}, &cli.IntFlag{
-			Name:     "smtpPort",
-			Usage:    "Sender Server Port",
-			Value:    587,
+			Name:        "smtpPort",
+			Usage:       "Sender Server Port",
+			Value:       587,
 			Destination: &smtpPort,
 		},
 	}
@@ -95,17 +96,23 @@ func main() {
 				return
 			},
 		}, {
-			Name:  "sendExampleMessage",
-			Usage: "Send example message",
+			Name:  "sendExampleEmail",
+			Usage: "Send example email",
 			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:        "receiverEmail",
+					Usage:       "Receiver Email address",
+					Required:    true,
+					Destination: &receiverEmail,
+				},
 			},
 			Action: func(c *cli.Context) (err error) {
 
-				sender := emailbridge.NewEmailSender(senderEmail, senderPassword, smtpHost, smtpPort)
+				sender := email.NewSender(senderEmail, senderPassword, smtpHost, smtpPort)
 
-				Receiver := []string{"otschen.prosto@gmail.com"}
+				receiver := []string{receiverEmail}
 
-				Subject := "Test Email from EmailBridge"
+				subject := "Test Email from EmailBridge"
 				message := `
 	<!DOCTYPE HTML PULBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 	<html>
@@ -121,9 +128,9 @@ func main() {
 	</body>
 	</html>
 	`
-				bodyMessage := sender.BuildHTMLEmail(Receiver, Subject, message)
-
-				err = sender.SendMail(Receiver, Subject, bodyMessage)
+				if bodyMessage, err := sender.BuildEmailHTML(message); err != nil {
+					err = sender.Send(receiver, subject, bodyMessage)
+				}
 				return
 			},
 		},

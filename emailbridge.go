@@ -220,7 +220,11 @@ func (o *HttpEmailBridge) sendEmail(w http.ResponseWriter, r *http.Request) {
 	var emailBody string
 	emailBody = net.GetQueryOrFormValue(paramEmailBody, r)
 
-	htmlMessage := o.BuildHTMLEmail(emailData.To, emailData.Subject, emailBody)
+	htmlMessage, err := o.BuildHTMLEmail(emailBody)
+	if err != nil {
+		statusBadRequest(w, err.Error())
+		return
+	}
 
 	o.storeEmail(r, &htmlMessage, emailData)
 
