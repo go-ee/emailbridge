@@ -16,6 +16,7 @@ require (
 	github.com/huandu/xstrings v1.3.2 // indirect
 	github.com/imdario/mergo v0.3.11 // indirect
 	github.com/jaytaylor/html2text v0.0.0-20200412013138-3577fbdbcff7 // indirect
+	github.com/kelseyhightower/envconfig v1.4.0 // indirect
 	github.com/matcornic/hermes/v2 v2.1.0 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/mitchellh/reflectwalk v1.0.1 // indirect

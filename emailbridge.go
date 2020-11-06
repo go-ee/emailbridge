@@ -9,8 +9,8 @@ import (
 	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/encrypt"
 	"github.com/go-ee/utils/net"
+	"github.com/matcornic/hermes/v2"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/alexcesaro/quotedprintable.v3"
 	"html/template"
 	"io/ioutil"
 	"net/http"
@@ -64,13 +64,21 @@ func (o *EmailData) ToString() string {
 	return strings.Join(o.To, ",")
 }
 
-func NewEmailBridge(
-	emailAddress, smtpLogin, smtpPassword, smtpHost string, smtpPort int,
-	pathStorage string, pathStatic string, encryptPassphrase string) (ret *HttpEmailBridge, err error) {
+type HttpEmailBridge struct {
+	*hermes.Hermes
+	*email.Sender
+	*encrypt.Encryptor
+	pathTemplates string
+	pathStorage   string
+	emailDataTmpl *template.Template
+	storeEmails   bool
+}
+
+func NewEmailBridge(config *Config, serveMux *http.ServeMux) (ret *HttpEmailBridge, err error) {
 
 	var encryptor *encrypt.Encryptor
 
-	if encryptor, err = encrypt.NewEncryptor(encryptPassphrase); err != nil {
+	if encryptor, err = encrypt.NewEncryptor(config.EncryptPassphrase); err != nil {
 		return
 	}
 
@@ -82,11 +90,11 @@ func NewEmailBridge(
 	}
 
 	ret = &HttpEmailBridge{
-		Sender: &email.Sender{Server: smtpHost, Port: smtpPort, SenderEmail: emailAddress,
-			SenderIdentity: emailAddress, SMTPUser: smtpLogin, SMTPPassword: smtpPassword},
+		Hermes:        config.Hermes.ToHermes(),
+		Sender:        config.Sender.ToEmailSender(),
 		Encryptor:     encryptor,
-		pathStorage:   pathStorage,
-		pathStatic:    pathStatic,
+		pathStorage:   config.PathStorage,
+		pathTemplates: config.PathTemplates,
 		emailDataTmpl: emailDataFormTemplate,
 	}
 
@@ -98,16 +106,11 @@ func NewEmailBridge(
 		return
 	}
 
-	return
-}
+	if serveMux != nil {
+		ret.WireRoutes(serveMux, &config.Routes)
+	}
 
-type HttpEmailBridge struct {
-	*email.Sender
-	*encrypt.Encryptor
-	pathStatic    string
-	pathStorage   string
-	emailDataTmpl *template.Template
-	storeEmails   bool
+	return
 }
 
 func (o *HttpEmailBridge) SendEmail(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +164,7 @@ func (o *HttpEmailBridge) GenerateEncryptedCodeWithLink(w http.ResponseWriter, r
 }
 
 func (o *HttpEmailBridge) FaviconHandler(w http.ResponseWriter, r *http.Request) {
-	favicon := fmt.Sprintf("%v/favicon.ico", o.pathStatic)
+	favicon := fmt.Sprintf("%v/favicon.ico", o.pathTemplates)
 	http.ServeFile(w, r, favicon)
 }
 
@@ -180,15 +183,15 @@ func (o *HttpEmailBridge) sendEmailByEmailData(emailData *EmailData, w http.Resp
 	var emailBody string
 	emailBody = net.GetQueryOrFormValue(paramEmailBody, r)
 
-	htmlMessage, err := o.BuildEmailHTML(emailBody)
+	message, err := o.BuildEmail(emailData.ToString(), emailData.Subject, emailBody)
 	if err != nil {
 		statusBadRequest(w, err.Error())
 		return
 	}
 
-	o.storeEmail(r, &htmlMessage, emailData)
+	o.storeEmail(r, message, emailData)
 
-	if err := o.Send(strings.Join(emailData.To, ","), emailData.Subject, htmlMessage, htmlMessage); err == nil {
+	if err := o.Send(message); err == nil {
 		statusOk(w, "email sent successfully.")
 	} else {
 		statusBadRequest(w, err.Error())
@@ -226,9 +229,10 @@ func parameterNotProvided(w http.ResponseWriter, param string) {
 	statusBadRequest(w, fmt.Sprintf("'%v' parameter is not provided", param))
 }
 
-func (o *HttpEmailBridge) storeEmail(r *http.Request, htmlMessage *string, emailData *EmailData) {
+func (o *HttpEmailBridge) storeEmail(r *http.Request, htmlMessage *email.Message, emailData *EmailData) {
 	if o.storeEmails {
-		fileData := []byte(fmt.Sprintf("request:\n%v\n\nmessage:\n%v\n", net.FormatRequestFrom(r), htmlMessage))
+		fileData := []byte(fmt.Sprintf("request:\n%v\n\nmessage:\n%v\n", net.FormatRequestFrom(r),
+			htmlMessage.PlainText))
 		filePath := filepath.Clean(fmt.Sprintf("%v/%v_%v_%v.txt",
 			o.pathStorage, strings.Join(emailData.To, "_"), emailData.Subject, time.Now()))
 		if fileErr := ioutil.WriteFile(filePath, fileData, 0644); fileErr != nil {
@@ -271,9 +275,9 @@ func (o *HttpEmailBridge) checkAndCreateStorage() (err error) {
 }
 
 func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
-	if o.pathStatic != "" {
-		if err = os.MkdirAll(o.pathStatic, 0755); err == nil {
-			logrus.Infof("use the static path: %v", o.pathStatic)
+	if o.pathTemplates != "" {
+		if err = os.MkdirAll(o.pathTemplates, 0755); err == nil {
+			logrus.Infof("use the static path: %v", o.pathTemplates)
 		} else {
 			err = errors.New("path for static files not defined")
 		}
@@ -281,39 +285,38 @@ func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
 	return
 }
 
-func (o HttpEmailBridge) BuildEmail(contentType, body string) (ret string, err error) {
+func (o HttpEmailBridge) BuildEmail(to string, subject string, bodyMarkdown string) (ret *email.Message, err error) {
 
-	header := make(map[string]string)
-
-	header["Date"] = time.Now().Format(time.RFC1123Z)
-	header["MIME-Version"] = "1.0"
-	header["Content-Type"] = fmt.Sprintf("%s; charset=\"utf-8\"", contentType)
-	header["Content-Transfer-Encoding"] = "quoted-printable"
-	header["Content-Disposition"] = "inline"
-
-	for key, value := range header {
-		ret += fmt.Sprintf("%s: %s\r\n", key, value)
+	hEmail := hermes.Email{
+		Body: hermes.Body{
+			FreeMarkdown: hermes.Markdown(bodyMarkdown),
+		},
 	}
 
-	var encodedMessage bytes.Buffer
-
-	finalMessage := quotedprintable.NewWriter(&encodedMessage)
-	if _, err = finalMessage.Write([]byte(body)); err == nil {
-		return
+	ret = &email.Message{To: to, Subject: subject}
+	if ret.PlainText, err = o.GeneratePlainText(hEmail); err == nil {
+		ret.HTML, err = o.GenerateHTML(hEmail)
 	}
-	if err = finalMessage.Close(); err == nil {
-		return
-	}
-	ret += "\r\n" + encodedMessage.String()
 	return
 }
 
-func (o *HttpEmailBridge) BuildEmailHTML(body string) (ret string, err error) {
-	ret, err = o.BuildEmail("text/html", body)
-	return
-}
+func (o HttpEmailBridge) WireRoutes(serveMux *http.ServeMux, routes *Routes) {
 
-func (o *HttpEmailBridge) BuildEmailPlain(body string) (ret string, err error) {
-	ret, err = o.BuildEmail("text/plain", body)
+	if routes.GenerateEmailCode != "" {
+		serveMux.HandleFunc(routes.GenerateEmailCode, o.GenerateEncryptedCode)
+	}
+	if routes.GenerateEmailCodeLink != "" {
+		serveMux.HandleFunc(routes.GenerateEmailCodeLink, o.GenerateEncryptedCodeWithLink)
+	}
+	if routes.SendEmail != "" {
+		serveMux.HandleFunc(routes.SendEmail, o.SendEmail)
+	}
+	if routes.SendEmailByCode != "" {
+		serveMux.HandleFunc(routes.SendEmailByCode, o.SendEmailByEncryptedCode)
+	}
+	if routes.Favicon != "" {
+		serveMux.HandleFunc(routes.Favicon, o.FaviconHandler)
+	}
+
 	return
 }
