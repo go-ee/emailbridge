@@ -10,6 +10,7 @@ import (
 	"github.com/go-ee/utils/encrypt"
 	"github.com/go-ee/utils/net"
 	"github.com/sirupsen/logrus"
+	"gopkg.in/alexcesaro/quotedprintable.v3"
 	"html/template"
 	"io/ioutil"
 	"net/http"
@@ -59,6 +60,10 @@ type EmailData struct {
 	CreatedAt time.Time
 }
 
+func (o *EmailData) ToString() string {
+	return strings.Join(o.To, ",")
+}
+
 func NewEmailBridge(
 	emailAddress, smtpLogin, smtpPassword, smtpHost string, smtpPort int,
 	pathStorage string, pathStatic string, encryptPassphrase string) (ret *HttpEmailBridge, err error) {
@@ -77,7 +82,8 @@ func NewEmailBridge(
 	}
 
 	ret = &HttpEmailBridge{
-		Sender:        email.NewSender(emailAddress, smtpLogin, smtpPassword, smtpHost, smtpPort),
+		Sender: &email.Sender{Server: smtpHost, Port: smtpPort, SenderEmail: emailAddress,
+			SenderIdentity: emailAddress, SMTPUser: smtpLogin, SMTPPassword: smtpPassword},
 		Encryptor:     encryptor,
 		pathStorage:   pathStorage,
 		pathStatic:    pathStatic,
@@ -182,7 +188,7 @@ func (o *HttpEmailBridge) sendEmailByEmailData(emailData *EmailData, w http.Resp
 
 	o.storeEmail(r, &htmlMessage, emailData)
 
-	if err := o.Send(emailData.To, emailData.Subject, htmlMessage); err == nil {
+	if err := o.Send(strings.Join(emailData.To, ","), emailData.Subject, htmlMessage, htmlMessage); err == nil {
 		statusOk(w, "email sent successfully.")
 	} else {
 		statusBadRequest(w, err.Error())
@@ -235,7 +241,7 @@ func (o *HttpEmailBridge) storeEmail(r *http.Request, htmlMessage *string, email
 
 func statusOk(w http.ResponseWriter, msg string) {
 	logrus.Debug("statusOk, %v", msg)
-	net.EnableCors(w)
+	// net.CorsAllowAll(w)
 	if _, resErr := w.Write([]byte(msg)); resErr != nil {
 		logrus.Debug("error writing response %v", resErr)
 	}
@@ -244,7 +250,7 @@ func statusOk(w http.ResponseWriter, msg string) {
 func statusBadRequest(w http.ResponseWriter, msg string) {
 	logrus.Warnf("statusBadRequest, %v", msg)
 
-	net.EnableCors(w)
+	// net.CorsAllowAll(w)
 	w.WriteHeader(http.StatusBadRequest)
 	if _, resErr := w.Write([]byte(msg)); resErr != nil {
 		logrus.Debug("error writing response %v", resErr)
@@ -272,5 +278,42 @@ func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
 			err = errors.New("path for static files not defined")
 		}
 	}
+	return
+}
+
+func (o HttpEmailBridge) BuildEmail(contentType, body string) (ret string, err error) {
+
+	header := make(map[string]string)
+
+	header["Date"] = time.Now().Format(time.RFC1123Z)
+	header["MIME-Version"] = "1.0"
+	header["Content-Type"] = fmt.Sprintf("%s; charset=\"utf-8\"", contentType)
+	header["Content-Transfer-Encoding"] = "quoted-printable"
+	header["Content-Disposition"] = "inline"
+
+	for key, value := range header {
+		ret += fmt.Sprintf("%s: %s\r\n", key, value)
+	}
+
+	var encodedMessage bytes.Buffer
+
+	finalMessage := quotedprintable.NewWriter(&encodedMessage)
+	if _, err = finalMessage.Write([]byte(body)); err == nil {
+		return
+	}
+	if err = finalMessage.Close(); err == nil {
+		return
+	}
+	ret += "\r\n" + encodedMessage.String()
+	return
+}
+
+func (o *HttpEmailBridge) BuildEmailHTML(body string) (ret string, err error) {
+	ret, err = o.BuildEmail("text/html", body)
+	return
+}
+
+func (o *HttpEmailBridge) BuildEmailPlain(body string) (ret string, err error) {
+	ret, err = o.BuildEmail("text/plain", body)
 	return
 }

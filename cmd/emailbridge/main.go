@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 	"github.com/go-ee/emailbridge"
-	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/lg"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"io/ioutil"
 	"net/http"
 	"os"
 )
@@ -16,15 +16,15 @@ func main() {
 	app.Usage = "Email Bridge CLI"
 	app.Version = "1.0"
 
-	var serverAddress, emailAddress, receiverEmail, smtpLogin, smtpPassword, smtpHost string
-	var serverPort, smtpPort int
-	var debug bool
-	var pathStorage, pathStatic, encryptPassphrase string
+	var address, emailAddress, receiverEmail, smtpLogin, smtpPassword, smtpHost, targetFile string
+	var port, smtpPort int
+	var verbose bool
+	var pathStorage, pathTemplates, encryptPassphrase string
 
 	lg.LogrusTimeAsTimestampFormatter()
 
 	app.Before = func(c *cli.Context) (err error) {
-		if debug {
+		if verbose {
 			logrus.SetLevel(logrus.DebugLevel)
 		}
 		logrus.Debugf("execute %v", c.Command.Name)
@@ -33,8 +33,8 @@ func main() {
 
 	app.Flags = []cli.Flag{
 		&cli.BoolFlag{
-			Name:        "debug",
-			Destination: &debug,
+			Name:        "verbose",
+			Destination: &verbose,
 			Usage:       "Enable debug log level",
 		}, &cli.StringFlag{
 			Name:        "email",
@@ -70,22 +70,22 @@ func main() {
 			Usage: "Start HTTP to EMAIL Bridge",
 			Flags: []cli.Flag{
 				&cli.StringFlag{
-					Name:        "serverAddress",
-					Required:    true,
-					Destination: &serverAddress,
-					Value:       "",
-					Usage:       "HTTP Server serverAddress",
+					Name:        "address",
+					Aliases:     []string{"a"},
+					Usage:       "Host for the HTTP server",
+					Value:       "0.0.0.0",
+					Destination: &address,
 				}, &cli.IntFlag{
-					Name:        "serverPort",
-					Required:    true,
-					Destination: &serverPort,
+					Name:        "port",
+					Aliases:     []string{"p"},
+					Usage:       "port for the HTTP server",
 					Value:       8080,
-					Usage:       "HTTP Server serverPort",
+					Destination: &port,
 				}, &cli.StringFlag{
-					Name:        "pathStatic",
+					Name:        "pathTemplates",
 					Required:    true,
-					Value:       "static",
-					Destination: &pathStatic,
+					Value:       "templates",
+					Destination: &pathTemplates,
 				}, &cli.StringFlag{
 					Name:        "pathStorage",
 					Required:    true,
@@ -103,11 +103,11 @@ func main() {
 
 				var bridge *emailbridge.HttpEmailBridge
 				if bridge, err = emailbridge.NewEmailBridge(emailAddress, smtpLogin, smtpPassword, smtpHost, smtpPort,
-					pathStorage, pathStatic, encryptPassphrase); err == nil {
+					pathStorage, pathTemplates, encryptPassphrase); err == nil {
 
 					wireRoutes(bridge)
 
-					serverAddr := fmt.Sprintf("%v:%v", serverAddress, serverPort)
+					serverAddr := fmt.Sprintf("%v:%v", address, port)
 
 					logrus.Infof("Start server at %v", serverAddr)
 					err = http.ListenAndServe(serverAddr, nil)
@@ -127,9 +127,11 @@ func main() {
 			},
 			Action: func(c *cli.Context) (err error) {
 
-				sender := email.NewSender(emailAddress, smtpLogin, smtpPassword, smtpHost, smtpPort)
-
-				receiver := []string{receiverEmail}
+				var bridge *emailbridge.HttpEmailBridge
+				if bridge, err = emailbridge.NewEmailBridge(emailAddress, smtpLogin, smtpPassword, smtpHost, smtpPort,
+					pathStorage, pathTemplates, encryptPassphrase); err != nil {
+					return
+				}
 
 				subject := "Test Email from EmailBridge"
 				message := `
@@ -147,8 +149,30 @@ func main() {
 	</body>
 	</html>
 	`
-				if bodyMessage, err := sender.BuildEmailHTML(message); err != nil {
-					err = sender.Send(receiver, subject, bodyMessage)
+				if bodyMessage, err := bridge.BuildEmailHTML(message); err != nil {
+					err = bridge.Send(receiverEmail, subject, bodyMessage, bodyMessage)
+				}
+				return
+			},
+		},
+		{
+			Name:  "markdown",
+			Usage: "Generate markdown help file",
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:        "target",
+					Aliases:     []string{"-t"},
+					Usage:       "Markdown target file name to generate",
+					Required:    true,
+					Value:       "email-bridge.md",
+					Destination: &targetFile,
+				},
+			},
+			Action: func(c *cli.Context) (err error) {
+				if markdown, err := app.ToMarkdown(); err == nil {
+					err = ioutil.WriteFile(targetFile, []byte(markdown), 0)
+				} else {
+					logrus.Infof("%v", err)
 				}
 				return
 			},
@@ -156,23 +180,17 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		if markdown, err := app.ToMarkdown(); err == nil {
-			logrus.Infof("\n%v", markdown)
-		} else {
-			logrus.Infof("%v", err)
-		}
-
 		logrus.WithFields(logrus.Fields{"err": err}).Warn("exit because of error.")
 	}
 }
 
 func wireRoutes(bridge *emailbridge.HttpEmailBridge) {
 
+	http.HandleFunc("/email-code/code", bridge.GenerateEncryptedCode)
+	http.HandleFunc("/email-code/link", bridge.GenerateEncryptedCodeWithLink)
+	http.HandleFunc("/email/send", bridge.SendEmail)
+	http.HandleFunc("/email/send-code", bridge.SendEmailByEncryptedCode)
 	http.HandleFunc("/favicon.ico", bridge.FaviconHandler)
-	http.HandleFunc("/generate", bridge.GenerateEncryptedCode)
-	http.HandleFunc("/sendEmail", bridge.SendEmail)
-	http.HandleFunc("/sendEmailByEncryptedCode", bridge.SendEmailByEncryptedCode)
-	http.HandleFunc("/", bridge.GenerateEncryptedCode)
 
 	return
 }
