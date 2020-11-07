@@ -19,12 +19,12 @@ func main() {
 	app.Version = "1.0"
 
 	var configFile, receiverEmail, targetFile string
-	var verbose bool
+	var debug bool
 
 	lg.LogrusTimeAsTimestampFormatter()
 
 	app.Before = func(c *cli.Context) (err error) {
-		if verbose {
+		if debug {
 			logrus.SetLevel(logrus.DebugLevel)
 		}
 		logrus.Debugf("execute %v", c.Command.Name)
@@ -33,14 +33,15 @@ func main() {
 
 	commonFlags := []cli.Flag{
 		&cli.BoolFlag{
-			Name:        "verbose",
-			Destination: &verbose,
+			Name:        "debug",
+			Aliases:     []string{"d"},
+			Destination: &debug,
 			Usage:       "Enable debug log level",
 		}, &cli.StringFlag{
 			Name:        "config",
+			Aliases:     []string{"c"},
 			Usage:       "EmailBridge config file",
 			Value:       "config.xml",
-			Required:    true,
 			Destination: &configFile,
 		},
 	}
@@ -53,12 +54,12 @@ func main() {
 			Action: func(c *cli.Context) (err error) {
 
 				var config emailbridge.Config
-				if err = emailbridge.LoadFile(configFile, &config); err == nil {
+				if err = emailbridge.LoadConfig(configFile, &config); err == nil {
 					if _, err = emailbridge.NewEmailBridge(&config, http.DefaultServeMux); err == nil {
 
 						serverAddr := fmt.Sprintf("%v:%v", config.Server, config.Port)
 
-						logrus.Infof("Start server at %v", serverAddr)
+						logrus.Infof("Start server at http://%v", serverAddr)
 						err = http.ListenAndServe(serverAddr, nil)
 					}
 				}
@@ -78,7 +79,7 @@ func main() {
 			Action: func(c *cli.Context) (err error) {
 
 				var config emailbridge.Config
-				if err = emailbridge.LoadFile(configFile, &config); err == nil {
+				if err = emailbridge.LoadConfig(configFile, &config); err == nil {
 					var bridge *emailbridge.HttpEmailBridge
 					if bridge, err = emailbridge.NewEmailBridge(&config, nil); err == nil {
 
@@ -93,46 +94,38 @@ func main() {
 			},
 		},
 		{
-			Name:  "markdown",
-			Usage: "Generate markdown help file",
-			Flags: []cli.Flag{
-				&cli.StringFlag{
-					Name:        "target",
-					Aliases:     []string{"-t"},
-					Usage:       "Markdown target file name to generate",
-					Required:    true,
-					Value:       "email-bridge.md",
-					Destination: &targetFile,
-				},
-			},
-			Action: func(c *cli.Context) (err error) {
-				if markdown, err := app.ToMarkdown(); err == nil {
-					err = ioutil.WriteFile(targetFile, []byte(markdown), 0)
-				} else {
-					logrus.Infof("%v", err)
-				}
-				return
-			},
-		},
-		{
 			Name:  "config",
 			Usage: "Generate default config file",
 			Flags: []cli.Flag{
 				&cli.StringFlag{
 					Name:        "target",
-					Aliases:     []string{"-t"},
+					Aliases:     []string{"t"},
 					Usage:       "Config target file name to generate",
-					Required:    true,
 					Value:       "config.yml",
 					Destination: &targetFile,
 				},
 			},
 			Action: func(c *cli.Context) (err error) {
-
-				if markdown, err := app.ToMarkdown(); err == nil {
+				err = emailbridge.WriteConfig(targetFile, emailbridge.BuildDefault())
+				return
+			},
+		},
+		{
+			Name:  "markdown",
+			Usage: "Generate markdown help file",
+			Flags: []cli.Flag{
+				&cli.StringFlag{
+					Name:        "target",
+					Aliases:     []string{"t"},
+					Usage:       "Markdown target file name to generate",
+					Value:       "email-bridge.md",
+					Destination: &targetFile,
+				},
+			},
+			Action: func(c *cli.Context) (err error) {
+				var markdown string
+				if markdown, err = app.ToMarkdown(); err == nil {
 					err = ioutil.WriteFile(targetFile, []byte(markdown), 0)
-				} else {
-					logrus.Infof("%v", err)
 				}
 				return
 			},

@@ -33,10 +33,10 @@ func (o *Sender) ToEmailSender() *email.Sender {
 
 type Product struct {
 	Name        string `yaml:"name", envconfig:"PRODUCT_NAME"`
-	Link        string `yaml:"name", envconfig:"PRODUCT_LINK"`
-	Logo        string `yaml:"name", envconfig:"PRODUCT_LOGO"`
-	Copyright   string `yaml:"name", envconfig:"PRODUCT_COPYRIGHT"`
-	TroubleText string `yaml:"name", envconfig:"PRODUCT_TROUBLE_TEXT"`
+	Link        string `yaml:"link", envconfig:"PRODUCT_LINK"`
+	Logo        string `yaml:"logo", envconfig:"PRODUCT_LOGO"`
+	Copyright   string `yaml:"copyright", envconfig:"PRODUCT_COPYRIGHT"`
+	TroubleText string `yaml:"troubleText", envconfig:"PRODUCT_TROUBLE_TEXT"`
 }
 
 func (o *Product) ToHermesProduct() *hermes.Product {
@@ -62,17 +62,18 @@ func (o *Hermes) ToHermes() *hermes.Hermes {
 }
 
 type Routes struct {
-	GenerateEmailCode     string `yaml:"generateEmailCode"`
-	GenerateEmailCodeLink string `yaml:"generateEmailCodeWithLink"`
-	SendEmail             string `yaml:"sendEmail"`
-	SendEmailByCode       string `yaml:"sendEmailByCode"`
-	Favicon               string `yaml:"favicon"`
+	Prefix            string `yaml:"prefix"`
+	GenerateEmailCode string `yaml:"generateEmailCode"`
+	SendEmail         string `yaml:"sendEmail"`
+	SendEmailByCode   string `yaml:"sendEmailByCode"`
+	Favicon           string `yaml:"favicon"`
 }
 
 type Config struct {
 	Server            string `yaml:"server", envconfig:"SERVER"`
 	Port              int    `yaml:"port", envconfig:"PORT"`
-	PathTemplates     string `yaml:"pathTemplates", envconfig:"PATH_TEMPLATES"`
+	CORS              string `yaml:"cors", envconfig:"CORS"`
+	Root              string `yaml:"root", envconfig:"PATH_ROOT"`
 	PathStorage       string `yaml:"pathStorage", envconfig:"PATH_STORAGE"`
 	EncryptPassphrase string `yaml:"encryptPassphrase", envconfig:"ENCRYPT_PASSPHRASE"`
 	Sender            Sender `yaml:"sender"`
@@ -80,7 +81,7 @@ type Config struct {
 	Routes            Routes `yaml:"routes"`
 }
 
-func LoadFile(configFile string, cfg *Config) (err error) {
+func LoadConfig(configFile string, cfg *Config) (err error) {
 	var file *os.File
 	if file, err = os.Open(configFile); err != nil {
 		return
@@ -99,12 +100,27 @@ func LoadFile(configFile string, cfg *Config) (err error) {
 	return
 }
 
+func WriteConfig(configFile string, cfg *Config) (err error) {
+	var file *os.File
+	if file, err = os.Create(configFile); err != nil {
+		return
+	}
+	defer file.Close()
+
+	encoder := yaml.NewEncoder(file)
+	if err = encoder.Encode(cfg); err != nil {
+		return
+	}
+	err = encoder.Close()
+	return
+}
+
 func BuildDefault() (ret *Config) {
 	ret = &Config{
-		Server:        "0.0.0.0",
-		Port:          8080,
-		PathTemplates: "templates",
-		PathStorage:   "storage",
+		Server:      "0.0.0.0",
+		Port:        8080,
+		Root:        "templates",
+		PathStorage: "storage",
 		Sender: Sender{
 			Email:    "info@example.com",
 			Identity: "Info",
@@ -124,11 +140,11 @@ func BuildDefault() (ret *Config) {
 			},
 		},
 		Routes: Routes{
-			GenerateEmailCode:     "/email-code",
-			GenerateEmailCodeLink: "/email-code/link",
-			SendEmail:             "/email/send",
-			SendEmailByCode:       "/email/send-code",
-			Favicon:               "/favicon.ico",
+			Prefix:            "",
+			GenerateEmailCode: "/email/code",
+			SendEmailByCode:   "/email/code/send",
+			SendEmail:         "/email/send",
+			Favicon:           "/favicon.ico",
 		},
 	}
 	return
