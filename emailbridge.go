@@ -5,11 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/go-ee/utils/email"
-	"github.com/go-ee/utils/encrypt"
-	"github.com/go-ee/utils/net"
-	"github.com/matcornic/hermes/v2"
-	"github.com/sirupsen/logrus"
 	"html/template"
 	"io/ioutil"
 	"net/http"
@@ -17,6 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/go-ee/utils/email"
+	"github.com/go-ee/utils/encrypt"
+	"github.com/go-ee/utils/net"
+	"github.com/matcornic/hermes/v2"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -26,7 +27,7 @@ const (
 	paramUrl     = "url"
 
 	paramEmailCode = "emailCode"
-	paramEmailBody = "emailBody"
+	paramMarkdown  = "Markdown"
 
 	emailDataFormText = `
 	<!DOCTYPE HTML PULBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
@@ -36,15 +37,19 @@ const (
 		</head>
 		<body>
 			<form>
-			  <label for="to">Email address:</label><br>
-			  <input type="text" id="to" name="to" value="{{ StringsJoin .To "," }}"/><br>
+			  <label for="To">Email address:</label><br>
+			  <input type="text" id="To" name="to" value="{{ StringsJoin .To "," }}"/><br>
 			  <label for="name">Name:</label><br>
-			  <input type="text" id="name" name="name" value="{{ .Name }}"/><br>
-			  <label for="subject">subject:</label><br>
-			  <input type="text" id="subject" name="subject" value="{{ .Subject }}"/><br>
-			  <label for="subject">url:</label><br>
-			  <input type="text" id="url" name="url" value="{{ .Url }}"/><br>
-			  <input type="submit"/>	
+			  <input type="text" id="Name" name="Name" value="{{ .Name }}"/><br>
+			  <label for="Subject">Subject:</label><br>
+			  <input type="text" id="Subject" name="Subject" value="{{ .Subject }}"/><br>
+			  <br> 
+			  <label for="Url">url:</label><br>
+			  <input type="text" id="Url" name="Url" value="{{ .Url }}"/><br>
+			  <br> 
+			  <label for="Markdown">Markdown:</label><br>
+			  <input type="text" id="Markdown" name="Markdown" value="{{ .Markdown }}"/><br>		
+			  <input type="submit"/>
 			</form>
 		</body>
 	</html>
@@ -56,15 +61,17 @@ type EmailData struct {
 	Name      string
 	Subject   string
 	Url       string
+	Markdown  string
 	CreatedAt time.Time
 }
 
-func (o *EmailData) ToString() string {
+func (o *EmailData) ToAsString() string {
 	return strings.Join(o.To, ",")
 }
 
 type HttpEmailBridge struct {
 	*hermes.Hermes
+	*hermes.Body
 	*email.Sender
 	*encrypt.Encryptor
 	root          string
@@ -90,6 +97,7 @@ func NewEmailBridge(config *Config, serveMux *http.ServeMux) (ret *HttpEmailBrid
 
 	ret = &HttpEmailBridge{
 		Hermes:        config.Hermes.ToHermes(),
+		Body:          config.Hermes.Body.ToHermesBody(),
 		Sender:        config.Sender.ToEmailSender(),
 		Encryptor:     encryptor,
 		root:          config.Root,
@@ -142,7 +150,8 @@ func (o *HttpEmailBridge) GenerateEmailCode(w http.ResponseWriter, r *http.Reque
 		logrus.Debugf("GenerateEmailCode, %v, %v", emailData.To, emailData.Subject)
 
 		if data, err := o.EncryptInstance(emailData); err == nil {
-			statusOk(w, fmt.Sprintf("%v?%v=%v", emailData.Url, paramEmailCode, hex.EncodeToString(data)))
+			link := fmt.Sprintf("%v?%v=%v", emailData.Url, paramEmailCode, hex.EncodeToString(data))
+			statusOk(w, fmt.Sprintf("<html><head><title>EmailCode</title></head><body><a target=\"_blank\" href=\"%v\">Link</a></br></br><textarea cols=\"50\" rows=\"10\">%v</textarea></body></html>", link, link))
 		} else {
 			statusBadRequest(w, err.Error())
 		}
@@ -167,10 +176,7 @@ func (o *HttpEmailBridge) SendEmailByCode(w http.ResponseWriter, r *http.Request
 func (o *HttpEmailBridge) sendEmailByEmailData(emailData *EmailData, w http.ResponseWriter, r *http.Request) {
 	logrus.Debugf("sendEmailByEmailData, %v, %v", emailData.To, emailData.Subject)
 
-	var emailBody string
-	emailBody = net.GetQueryOrFormValue(paramEmailBody, r)
-
-	message, err := o.BuildEmail(emailData.ToString(), emailData.Subject, emailBody)
+	message, err := o.BuildEmail(emailData.ToAsString(), emailData.Subject, o.BuildBody(net.GetQueryOrFormValue(paramMarkdown, r)))
 	if err != nil {
 		statusBadRequest(w, err.Error())
 		return
@@ -187,10 +193,12 @@ func (o *HttpEmailBridge) sendEmailByEmailData(emailData *EmailData, w http.Resp
 
 func decodeEmailDataParams(r *http.Request) (ret *EmailData) {
 	ret = &EmailData{
-		To:        strings.Split(net.GetQueryOrFormValue(paramTo, r), ","),
-		Name:      net.GetQueryOrFormValue(paramName, r),
-		Subject:   net.GetQueryOrFormValue(paramSubject, r),
-		Url:       net.GetQueryOrFormValue(paramUrl, r),
+		To:       strings.Split(net.GetQueryOrFormValue(paramTo, r), ","),
+		Name:     net.GetQueryOrFormValue(paramName, r),
+		Subject:  net.GetQueryOrFormValue(paramSubject, r),
+		Url:      net.GetQueryOrFormValue(paramUrl, r),
+		Markdown: net.GetQueryOrFormValue(paramMarkdown, r),
+
 		CreatedAt: time.Now()}
 	return
 }
@@ -272,12 +280,17 @@ func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
 	return
 }
 
-func (o HttpEmailBridge) BuildEmail(to string, subject string, bodyMarkdown string) (ret *email.Message, err error) {
+func (o *HttpEmailBridge) BuildBody(markdown string) (ret *hermes.Body) {
+
+	ret = &*o.Body
+	ret.FreeMarkdown = hermes.Markdown(markdown)
+	return ret
+}
+
+func (o HttpEmailBridge) BuildEmail(to, subject string, body *hermes.Body) (ret *email.Message, err error) {
 
 	hEmail := hermes.Email{
-		Body: hermes.Body{
-			FreeMarkdown: hermes.Markdown(bodyMarkdown),
-		},
+		Body: *body,
 	}
 
 	ret = &email.Message{To: to, Subject: subject}
@@ -290,15 +303,23 @@ func (o HttpEmailBridge) BuildEmail(to string, subject string, bodyMarkdown stri
 func (o HttpEmailBridge) WireRoutes(serveMux *http.ServeMux, routes *Routes) {
 
 	if routes.GenerateEmailCode != "" {
-		serveMux.HandleFunc(routes.Prefix+routes.GenerateEmailCode, o.GenerateEmailCode)
+		route := routes.Prefix + routes.GenerateEmailCode
+		logrus.Infof("add route, %v", route)
+		serveMux.HandleFunc(route, o.GenerateEmailCode)
 	}
 	if routes.SendEmail != "" {
+		route := routes.Prefix + routes.SendEmail
+		logrus.Infof("add route, %v", route)
 		serveMux.HandleFunc(routes.Prefix+routes.SendEmail, o.SendEmail)
 	}
 	if routes.SendEmailByCode != "" {
+		route := routes.Prefix + routes.SendEmailByCode
+		logrus.Infof("add route, %v", route)
 		serveMux.HandleFunc(routes.Prefix+routes.SendEmailByCode, o.SendEmailByCode)
 	}
 	if routes.Favicon != "" {
+		route := routes.Prefix + routes.Favicon
+		logrus.Infof("add route, %v", route)
 		serveMux.HandleFunc(routes.Favicon, o.FaviconHandler)
 	}
 

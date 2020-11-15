@@ -1,11 +1,12 @@
 package emailbridge
 
 import (
+	"os"
+
 	"github.com/go-ee/utils/email"
 	"github.com/kelseyhightower/envconfig"
 	"github.com/matcornic/hermes/v2"
 	"gopkg.in/yaml.v2"
-	"os"
 )
 
 type SMTP struct {
@@ -49,9 +50,30 @@ func (o *Product) ToHermesProduct() *hermes.Product {
 	}
 }
 
+type Body struct {
+	Name      string   `yaml:"name"`      // The name of the contacted person
+	Intros    []string `yaml:"intros"`    // Intro sentences, first displayed in the email
+	Outros    []string `yaml:"outros"`    // Outro sentences, last displayed in the email
+	Greeting  string   `yaml:"greeting"`  // Greeting for the contacted person (default to 'Hi')
+	Signature string   `yaml:"signature"` // Signature for the contacted person (default to 'Yours truly')
+	Title     string   `yaml:"title"`     // Title replaces the greeting+name when set
+}
+
+func (o *Body) ToHermesBody() *hermes.Body {
+	return &hermes.Body{
+		Name:      o.Name,
+		Intros:    o.Intros,
+		Outros:    o.Outros,
+		Greeting:  o.Greeting,
+		Signature: o.Signature,
+		Title:     o.Title,
+	}
+}
+
 type Hermes struct {
 	Product            Product `yaml:"product"`
 	DisableCSSInlining bool    `yaml:"disableCSSInlining"`
+	Body               Body    `yaml:"body"`
 }
 
 func (o *Hermes) ToHermes() *hermes.Hermes {
@@ -137,6 +159,14 @@ func BuildDefault() (ret *Config) {
 				Link:      "www.example.com",
 				Logo:      "www.example.com/logo.svg",
 				Copyright: "@ Example",
+			},
+			Body: Body{
+				Name:      "",
+				Intros:    []string{"Intro 1", "Intro 2"},
+				Outros:    []string{"Outro 1", "Outro 2"},
+				Greeting:  "Sei gegrüßt, ",
+				Signature: "Wir freuen uns",
+				Title:     "Herzlichen Glückwunsch",
 			},
 		},
 		Routes: Routes{

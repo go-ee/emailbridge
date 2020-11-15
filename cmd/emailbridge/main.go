@@ -2,15 +2,16 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"time"
+
 	"github.com/go-ee/emailbridge"
 	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/lg"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"time"
 )
 
 func main() {
@@ -68,14 +69,14 @@ func main() {
 		}, {
 			Name:  "sendExample",
 			Usage: "Send example email",
-			Flags: []cli.Flag{
+			Flags: append(commonFlags,
 				&cli.StringFlag{
 					Name:        "receiverEmail",
+					Aliases:     []string{"r"},
 					Usage:       "Receiver Email serverAddress",
 					Required:    true,
 					Destination: &receiverEmail,
-				},
-			},
+				}),
 			Action: func(c *cli.Context) (err error) {
 
 				var config emailbridge.Config
@@ -85,7 +86,7 @@ func main() {
 
 						var message *email.Message
 						if message, err = bridge.BuildEmail(receiverEmail, "Test "+time.Now().String(),
-							"This is markdown body"); err == nil {
+							bridge.BuildBody("This is markdown body")); err == nil {
 							err = bridge.Send(message)
 						}
 					}
