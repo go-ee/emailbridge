@@ -1,0 +1,39 @@
+server: 0.0.0.0
+port: 8080
+cors: ""
+root: templates
+pathStorage: storage
+encryptPassphrase: ""
+sender:
+  port: info@example.com
+  identity: Info
+  smtp:
+    server: mail.example.com
+    port: 465
+    user: info@example.com
+    password: changeMe
+hermes:
+  product:
+    name: ExampleProduct
+    link: www.example.com
+    logo: www.example.com/logo.svg
+    copyright: '@Example'
+    troubleText: ""
+  disableCSSInlining: false
+  body:
+    name: ""
+    intros:
+    - Intro 1
+    - Intro 2
+    outros:
+    - Outro 1
+    - Outro 2
+    greeting: 'Sei gegrüßt, '
+    signature: Wir freuen uns
+    title: Herzlichen Glückwunsch
+routes:
+  prefix: ""
+  generateEmailCode: /email/code
+  sendEmail: /email/send
+  sendEmailByCode: /email/code/send
+  favicon: /favicon.ico
