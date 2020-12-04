@@ -60,7 +60,13 @@ func main() {
 
 						serverAddr := fmt.Sprintf("%v:%v", config.Server, config.Port)
 
-						logrus.Infof("Start server at http://%v", serverAddr)
+						linkHost := config.Server
+						if linkHost == "" || linkHost == "0.0.0.0" {
+							linkHost = "127.0.0.1"
+						}
+
+						logrus.Infof("Start server at http://%v:%v", linkHost, config.Port)
+
 						err = http.ListenAndServe(serverAddr, nil)
 					}
 				}

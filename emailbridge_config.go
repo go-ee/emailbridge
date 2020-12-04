@@ -139,8 +139,8 @@ func WriteConfig(configFile string, cfg *Config) (err error) {
 
 func BuildDefault() (ret *Config) {
 	ret = &Config{
-		Server:      "0.0.0.0",
-		Port:        8080,
+		Server:      "",
+		Port:        7070,
 		Root:        "templates",
 		PathStorage: "storage",
 		Sender: Sender{
