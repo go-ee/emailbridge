@@ -1,87 +1,12 @@
 package emailbridge
 
 import (
+	"github.com/go-ee/utils/email"
 	"os"
 
-	"github.com/go-ee/utils/email"
 	"github.com/kelseyhightower/envconfig"
-	"github.com/matcornic/hermes/v2"
 	"gopkg.in/yaml.v2"
 )
-
-type SMTP struct {
-	Server   string `yaml:"server", envconfig:"SMTP_SERVER"`
-	Port     int    `yaml:"port", envconfig:"SMTP_PORT"`
-	User     string `yaml:"user", envconfig:"SMTP_USER"`
-	Password string `yaml:"password", envconfig:"SMTP_PASSWORD"`
-}
-
-type Sender struct {
-	Email    string `yaml:"port", envconfig:"SENDER_EMAIL"`
-	Identity string `yaml:"identity", envconfig:"SENDER_IDENTITY"`
-	SMTP     SMTP   `yaml:"smtp"`
-}
-
-func (o *Sender) ToEmailSender() *email.Sender {
-	return &email.Sender{
-		SenderEmail:    o.Email,
-		SenderIdentity: o.Identity,
-		SMTPServer:     o.SMTP.Server,
-		SMTPPort:       o.SMTP.Port,
-		SMTPUser:       o.SMTP.User,
-		SMTPPassword:   o.SMTP.Password}
-}
-
-type Product struct {
-	Name        string `yaml:"name", envconfig:"PRODUCT_NAME"`
-	Link        string `yaml:"link", envconfig:"PRODUCT_LINK"`
-	Logo        string `yaml:"logo", envconfig:"PRODUCT_LOGO"`
-	Copyright   string `yaml:"copyright", envconfig:"PRODUCT_COPYRIGHT"`
-	TroubleText string `yaml:"troubleText", envconfig:"PRODUCT_TROUBLE_TEXT"`
-}
-
-func (o *Product) ToHermesProduct() *hermes.Product {
-	return &hermes.Product{
-		Name:        o.Name,
-		Link:        o.Link,
-		Logo:        o.Logo,
-		Copyright:   o.Copyright,
-		TroubleText: o.TroubleText,
-	}
-}
-
-type Body struct {
-	Name      string   `yaml:"name"`      // The name of the contacted person
-	Intros    []string `yaml:"intros"`    // Intro sentences, first displayed in the email
-	Outros    []string `yaml:"outros"`    // Outro sentences, last displayed in the email
-	Greeting  string   `yaml:"greeting"`  // Greeting for the contacted person (default to 'Hi')
-	Signature string   `yaml:"signature"` // Signature for the contacted person (default to 'Yours truly')
-	Title     string   `yaml:"title"`     // Title replaces the greeting+name when set
-}
-
-func (o *Body) ToHermesBody() *hermes.Body {
-	return &hermes.Body{
-		Name:      o.Name,
-		Intros:    o.Intros,
-		Outros:    o.Outros,
-		Greeting:  o.Greeting,
-		Signature: o.Signature,
-		Title:     o.Title,
-	}
-}
-
-type Hermes struct {
-	Product            Product `yaml:"product"`
-	DisableCSSInlining bool    `yaml:"disableCSSInlining"`
-	Body               Body    `yaml:"body"`
-}
-
-func (o *Hermes) ToHermes() *hermes.Hermes {
-	return &hermes.Hermes{
-		Product:            *o.Product.ToHermesProduct(),
-		DisableCSSInlining: o.DisableCSSInlining,
-	}
-}
 
 type Routes struct {
 	Prefix            string `yaml:"prefix"`
@@ -92,18 +17,16 @@ type Routes struct {
 }
 
 type Config struct {
-	Server            string `yaml:"server", envconfig:"SERVER"`
-	Port              int    `yaml:"port", envconfig:"PORT"`
-	CORS              string `yaml:"cors", envconfig:"CORS"`
-	Root              string `yaml:"root", envconfig:"PATH_ROOT"`
-	PathStorage       string `yaml:"pathStorage", envconfig:"PATH_STORAGE"`
-	EncryptPassphrase string `yaml:"encryptPassphrase", envconfig:"ENCRYPT_PASSPHRASE"`
-	Sender            Sender `yaml:"sender"`
-	Hermes            Hermes `yaml:"hermes"`
-	Routes            Routes `yaml:"routes"`
+	Server            string             `yaml:"server", envconfig:"SERVER"`
+	Port              int                `yaml:"port", envconfig:"PORT"`
+	CORS              string             `yaml:"cors", envconfig:"CORS"`
+	StaticFolder      string             `yaml:"staticFolder", envconfig:"STATIC_FOLDER"`
+	EncryptPassphrase string             `yaml:"encryptPassphrase", envconfig:"ENCRYPT_PASSPHRASE"`
+	EngineConfig      email.EngineConfig `yaml:"engineConfig"`
+	Routes            Routes             `yaml:"routes"`
 }
 
-func LoadConfig(configFile string, cfg *Config) (err error) {
+func ConfigLoad(configFile string, cfg *Config) (err error) {
 	var file *os.File
 	if file, err = os.Open(configFile); err != nil {
 		return
@@ -116,13 +39,16 @@ func LoadConfig(configFile string, cfg *Config) (err error) {
 	}
 	err = envconfig.Process("", cfg)
 
-	if cfg.EncryptPassphrase == "" {
-		cfg.EncryptPassphrase = cfg.Sender.Email + cfg.Sender.SMTP.Password
-	}
 	return
 }
 
-func WriteConfig(configFile string, cfg *Config) (err error) {
+func (o *Config) Setup() {
+	if o.EncryptPassphrase == "" {
+		o.EncryptPassphrase = o.EngineConfig.Sender.Email + o.EngineConfig.Sender.SMTP.Password
+	}
+}
+
+func (o *Config) WriteConfig(configFile string) (err error) {
 	var file *os.File
 	if file, err = os.Create(configFile); err != nil {
 		return
@@ -130,7 +56,7 @@ func WriteConfig(configFile string, cfg *Config) (err error) {
 	defer file.Close()
 
 	encoder := yaml.NewEncoder(file)
-	if err = encoder.Encode(cfg); err != nil {
+	if err = encoder.Encode(o); err != nil {
 		return
 	}
 	err = encoder.Close()
@@ -139,38 +65,10 @@ func WriteConfig(configFile string, cfg *Config) (err error) {
 
 func BuildDefault() (ret *Config) {
 	ret = &Config{
-		Server:      "",
-		Port:        7070,
-		Root:        "templates",
-		PathStorage: "storage",
-		Sender: Sender{
-			Email:    "info@example.com",
-			Identity: "Info",
-			SMTP: SMTP{
-				Server:   "mail.example.com",
-				Port:     465,
-				User:     "info@example.com",
-				Password: "changeMe",
-			},
-		},
-		Hermes: Hermes{
-			Product: Product{
-				Name:      "ExampleProduct",
-				Link:      "www.example.com",
-				Logo:      "www.example.com/logo.svg",
-				Copyright: "@ Example",
-			},
-			Body: Body{
-				Name:      "",
-				Intros:    []string{"Intro 1", "Intro 2"},
-				Outros:    []string{"Outro 1", "Outro 2"},
-				Greeting:  "Sei gegrüßt, ",
-				Signature: "Wir freuen uns",
-				Title:     "Herzlichen Glückwunsch",
-			},
-		},
+		Server: "",
+		Port:   7070,
 		Routes: Routes{
-			Prefix:            "",
+			Prefix:            "_api",
 			GenerateEmailCode: "/email/code",
 			SendEmailByCode:   "/email/code/send",
 			SendEmail:         "/email/send",

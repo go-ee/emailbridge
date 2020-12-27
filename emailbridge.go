@@ -5,19 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"html/template"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
-
 	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/encrypt"
 	"github.com/go-ee/utils/net"
-	"github.com/matcornic/hermes/v2"
 	"github.com/sirupsen/logrus"
+	"html/template"
+	"net/http"
+	"os"
+	"strings"
 )
 
 const (
@@ -29,7 +24,7 @@ const (
 	paramEmailCode = "emailCode"
 	paramMarkdown  = "Markdown"
 
-	emailDataFormText = `
+	emailFormTemplateText = `
 	<!DOCTYPE HTML PULBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 	<html>
 		<head>
@@ -56,31 +51,16 @@ const (
 	`
 )
 
-type EmailData struct {
-	To        []string
-	Name      string
-	Subject   string
-	Url       string
-	Markdown  string
-	CreatedAt time.Time
-}
-
-func (o *EmailData) ToAsString() string {
-	return strings.Join(o.To, ",")
-}
-
 type HttpEmailBridge struct {
-	*hermes.Hermes
-	*hermes.Body
-	*email.Sender
+	*email.Engine
 	*encrypt.Encryptor
-	root          string
-	pathStorage   string
+	staticFolder  string
 	emailDataTmpl *template.Template
-	storeEmails   bool
 }
 
 func NewEmailBridge(config *Config, serveMux *http.ServeMux) (ret *HttpEmailBridge, err error) {
+
+	config.Setup()
 
 	var encryptor *encrypt.Encryptor
 
@@ -88,28 +68,26 @@ func NewEmailBridge(config *Config, serveMux *http.ServeMux) (ret *HttpEmailBrid
 		return
 	}
 
-	var emailDataFormTemplate *template.Template
+	var emailFormTemplate *template.Template
 
-	if emailDataFormTemplate, err = template.New("test").
-		Funcs(template.FuncMap{"StringsJoin": strings.Join}).Parse(emailDataFormText); err != nil {
+	if emailFormTemplate, err = template.New("test").
+		Funcs(template.FuncMap{"StringsJoin": strings.Join}).Parse(emailFormTemplateText); err != nil {
+		return
+	}
+
+	var emailEngine *email.Engine
+	if emailEngine, err = email.NewEngine(&config.EngineConfig); err != nil {
 		return
 	}
 
 	ret = &HttpEmailBridge{
-		Hermes:        config.Hermes.ToHermes(),
-		Body:          config.Hermes.Body.ToHermesBody(),
-		Sender:        config.Sender.ToEmailSender(),
+		Engine:        emailEngine,
 		Encryptor:     encryptor,
-		root:          config.Root,
-		pathStorage:   config.PathStorage,
-		emailDataTmpl: emailDataFormTemplate,
+		staticFolder:  config.StaticFolder,
+		emailDataTmpl: emailFormTemplate,
 	}
 
-	if err = ret.checkAndCreateStorage(); err != nil {
-		return
-	}
-
-	if err = ret.checkAndCreateStatic(); err != nil {
+	if err = ret.checkAndCreateStaticFolder(); err != nil {
 		return
 	}
 
@@ -160,12 +138,12 @@ func (o *HttpEmailBridge) GenerateEmailCode(w http.ResponseWriter, r *http.Reque
 }
 
 func (o *HttpEmailBridge) FaviconHandler(w http.ResponseWriter, r *http.Request) {
-	favicon := fmt.Sprintf("%v/favicon.ico", o.root)
+	favicon := fmt.Sprintf("%v/favicon.ico", o.staticFolder)
 	http.ServeFile(w, r, favicon)
 }
 
 func (o *HttpEmailBridge) SendEmailByCode(w http.ResponseWriter, r *http.Request) {
-	var emailData *EmailData
+	var emailData *email.EmailData
 	if emailData = o.decryptEmailData(w, r); emailData == nil {
 		return
 	}
@@ -173,37 +151,27 @@ func (o *HttpEmailBridge) SendEmailByCode(w http.ResponseWriter, r *http.Request
 	o.sendEmailByEmailData(emailData, w, r)
 }
 
-func (o *HttpEmailBridge) sendEmailByEmailData(emailData *EmailData, w http.ResponseWriter, r *http.Request) {
+func (o *HttpEmailBridge) sendEmailByEmailData(emailData *email.EmailData, w http.ResponseWriter, r *http.Request) {
 	logrus.Debugf("sendEmailByEmailData, %v, %v", emailData.To, emailData.Subject)
 
-	message, err := o.BuildEmail(emailData.ToAsString(), emailData.Subject, o.BuildBody(net.GetQueryOrFormValue(paramMarkdown, r)))
-	if err != nil {
-		statusBadRequest(w, err.Error())
-		return
-	}
-
-	o.storeEmail(r, message, emailData)
-
-	if err := o.Send(message); err == nil {
+	if err := o.Send(emailData); err == nil {
 		statusOk(w, "email sent successfully.")
 	} else {
 		statusBadRequest(w, err.Error())
 	}
 }
 
-func decodeEmailDataParams(r *http.Request) (ret *EmailData) {
-	ret = &EmailData{
+func decodeEmailDataParams(r *http.Request) (ret *email.EmailData) {
+	ret = &email.EmailData{
 		To:       strings.Split(net.GetQueryOrFormValue(paramTo, r), ","),
 		Name:     net.GetQueryOrFormValue(paramName, r),
 		Subject:  net.GetQueryOrFormValue(paramSubject, r),
 		Url:      net.GetQueryOrFormValue(paramUrl, r),
-		Markdown: net.GetQueryOrFormValue(paramMarkdown, r),
-
-		CreatedAt: time.Now()}
+		Markdown: net.GetQueryOrFormValue(paramMarkdown, r)}
 	return
 }
 
-func (o *HttpEmailBridge) decryptEmailData(w http.ResponseWriter, r *http.Request) (ret *EmailData) {
+func (o *HttpEmailBridge) decryptEmailData(w http.ResponseWriter, r *http.Request) (ret *email.EmailData) {
 	var encrypted string
 	if encrypted = net.GetQueryOrFormValue(paramEmailCode, r); encrypted == "" {
 		parameterNotProvided(w, paramEmailCode)
@@ -224,20 +192,6 @@ func parameterNotProvided(w http.ResponseWriter, param string) {
 	statusBadRequest(w, fmt.Sprintf("'%v' parameter is not provided", param))
 }
 
-func (o *HttpEmailBridge) storeEmail(r *http.Request, htmlMessage *email.Message, emailData *EmailData) {
-	if o.storeEmails {
-		fileData := []byte(fmt.Sprintf("request:\n%v\n\nmessage:\n%v\n", net.FormatRequestFrom(r),
-			htmlMessage.PlainText))
-		filePath := filepath.Clean(fmt.Sprintf("%v/%v_%v_%v.txt",
-			o.pathStorage, strings.Join(emailData.To, "_"), emailData.Subject, time.Now()))
-		if fileErr := ioutil.WriteFile(filePath, fileData, 0644); fileErr != nil {
-			logrus.Warnf("can't write '%v', %v", filePath, fileErr)
-		} else {
-			logrus.Debugf("written '%v', bytes=%v", filePath, len(fileData))
-		}
-	}
-}
-
 func statusOk(w http.ResponseWriter, msg string) {
 	logrus.Debug("statusOk, %v", msg)
 	// net.CorsAllowAll(w)
@@ -256,46 +210,13 @@ func statusBadRequest(w http.ResponseWriter, msg string) {
 	}
 }
 
-func (o *HttpEmailBridge) checkAndCreateStorage() (err error) {
-	o.storeEmails = false
-	if o.pathStorage != "" {
-		if err = os.MkdirAll(o.pathStorage, 0755); err == nil {
-			o.storeEmails = true
-			logrus.Infof("use the storage path: %v", o.pathStorage)
-		} else {
-			logrus.Infof("can't create the storage path '%v': %v", o.pathStorage, err)
-		}
-	}
-	return
-}
-
-func (o *HttpEmailBridge) checkAndCreateStatic() (err error) {
-	if o.root != "" {
-		if err = os.MkdirAll(o.root, 0755); err == nil {
-			logrus.Infof("use the static path: %v", o.root)
+func (o *HttpEmailBridge) checkAndCreateStaticFolder() (err error) {
+	if o.staticFolder != "" {
+		if err = os.MkdirAll(o.staticFolder, 0755); err == nil {
+			logrus.Infof("use the static path: %v", o.staticFolder)
 		} else {
 			err = errors.New("path for static files not defined")
 		}
-	}
-	return
-}
-
-func (o *HttpEmailBridge) BuildBody(markdown string) (ret *hermes.Body) {
-
-	ret = &*o.Body
-	ret.FreeMarkdown = hermes.Markdown(markdown)
-	return ret
-}
-
-func (o HttpEmailBridge) BuildEmail(to, subject string, body *hermes.Body) (ret *email.Message, err error) {
-
-	hEmail := hermes.Email{
-		Body: *body,
-	}
-
-	ret = &email.Message{To: to, Subject: subject}
-	if ret.PlainText, err = o.GeneratePlainText(hEmail); err == nil {
-		ret.HTML, err = o.GenerateHTML(hEmail)
 	}
 	return
 }

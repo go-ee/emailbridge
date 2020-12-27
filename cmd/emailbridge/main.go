@@ -2,16 +2,14 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
-	"net/http"
-	"os"
-	"time"
-
 	"github.com/go-ee/emailbridge"
 	"github.com/go-ee/utils/email"
 	"github.com/go-ee/utils/lg"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli/v2"
+	"io/ioutil"
+	"net/http"
+	"os"
 )
 
 func main() {
@@ -42,7 +40,7 @@ func main() {
 			Name:        "config",
 			Aliases:     []string{"c"},
 			Usage:       "EmailBridge config file",
-			Value:       "config.xml",
+			Value:       "config.yml",
 			Destination: &configFile,
 		},
 	}
@@ -55,7 +53,7 @@ func main() {
 			Action: func(c *cli.Context) (err error) {
 
 				var config emailbridge.Config
-				if err = emailbridge.LoadConfig(configFile, &config); err == nil {
+				if err = emailbridge.ConfigLoad(configFile, &config); err == nil {
 					if _, err = emailbridge.NewEmailBridge(&config, http.DefaultServeMux); err == nil {
 
 						serverAddr := fmt.Sprintf("%v:%v", config.Server, config.Port)
@@ -86,15 +84,17 @@ func main() {
 			Action: func(c *cli.Context) (err error) {
 
 				var config emailbridge.Config
-				if err = emailbridge.LoadConfig(configFile, &config); err == nil {
+				if err = emailbridge.ConfigLoad(configFile, &config); err == nil {
 					var bridge *emailbridge.HttpEmailBridge
 					if bridge, err = emailbridge.NewEmailBridge(&config, nil); err == nil {
-
-						var message *email.Message
-						if message, err = bridge.BuildEmail(receiverEmail, "Test "+time.Now().String(),
-							bridge.BuildBody("This is markdown body")); err == nil {
-							err = bridge.Send(message)
-						}
+						err = bridge.Send(
+							&email.EmailData{
+								To:       []string{receiverEmail},
+								Name:     "TestName",
+								Subject:  "TestSubject",
+								Url:      "TestUrl",
+								Markdown: "This is markdown body",
+							})
 					}
 				}
 				return
@@ -107,13 +107,13 @@ func main() {
 				&cli.StringFlag{
 					Name:        "target",
 					Aliases:     []string{"t"},
-					Usage:       "Config target file name to generate",
+					Usage:       "EngineConfig target file name to generate",
 					Value:       "config.yml",
 					Destination: &targetFile,
 				},
 			},
 			Action: func(c *cli.Context) (err error) {
-				err = emailbridge.WriteConfig(targetFile, emailbridge.BuildDefault())
+				err = emailbridge.BuildDefault().WriteConfig(targetFile)
 				return
 			},
 		},
